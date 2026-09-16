@@ -22,7 +22,8 @@ tree. See [`plaibook/README.md`](plaibook/README.md). `plai review`
 with no arguments reviews `HEAD` in the current directory;
 `plai review org/repo/123` is the PR/MR form. `ansible-playbook
 review.yml` remains the AAP path. Until this version is on PyPI, the
-same wheel is `pip install .` from this checkout. Contributors still
+same wheel is `pip install .` from this checkout. Put that venv under
+`$HOME`, not `/tmp` (macOS XProtect). Contributors still
 `uv sync --extra dev` — see [CONTRIBUTING](CONTRIBUTING.md).
 
 ## Why Ansible?

@@ -128,3 +128,19 @@ def test_write_progress_line_only_cli_owned_tempfile(tmp_path, monkeypatch):
         os.chmod(progress_dir, 0o700)
         Path(progress_dir).rmdir()
 
+
+def test_create_progress_file_can_use_cache_scratch(tmp_path):
+    from pathlib import Path
+
+    from plaibook.progress import create_progress_file
+
+    scratch = tmp_path / "cache-tmp"
+    scratch.mkdir()
+    progress_dir, progress_path = create_progress_file(directory=str(scratch))
+    try:
+        assert Path(progress_dir).parent == scratch
+        assert Path(progress_path).is_file()
+    finally:
+        Path(progress_path).unlink(missing_ok=True)
+        Path(progress_dir).rmdir()
+

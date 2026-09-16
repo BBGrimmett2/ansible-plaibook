@@ -25,6 +25,7 @@ from plaibook.playbook import (
     generate_run_id,
     last_run_path,
     run_ansible_playbook,
+    runtime_tmp_dir,
 )
 from plaibook.progress import create_progress_file
 from plaibook.summary import (
@@ -452,7 +453,7 @@ def cmd_review(args: argparse.Namespace) -> int:
             sys.stderr.flush()
             result = run_ansible_playbook(command, playbook_root=root, verbose=True)
         elif spinner_enabled(sys.stderr):
-            progress_dir, progress_path = create_progress_file()
+            progress_dir, progress_path = create_progress_file(directory=str(runtime_tmp_dir()))
             try:
                 with WaitSpinner(
                     _progress_line(args).rstrip("\n"),

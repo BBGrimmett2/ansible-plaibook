@@ -374,7 +374,37 @@ def test_run_ansible_playbook_sets_isolated_collections_path(tmp_path, monkeypat
     )
     env = recorded["env"]
     assert env["ANSIBLE_COLLECTIONS_PATH"].split(os.pathsep)[0] == str(coll)
+    assert env["TMPDIR"] == str(home / ".cache" / "ansible-plaibook" / "tmp")
+    assert Path(env["TMPDIR"]).is_dir()
     assert Path(env["ANSIBLE_CONFIG"]) == tmp_path / "ansible.cfg"
+
+
+def test_run_ansible_playbook_does_not_keep_slash_tmp(tmp_path, monkeypatch):
+    recorded = {}
+
+    class FakeProc:
+        pid = 1
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return "", ""
+
+    def fake_popen(**kwargs):
+        recorded.update(kwargs)
+        return FakeProc()
+
+    monkeypatch.setattr("plaibook.playbook.subprocess.Popen", fake_popen)
+    monkeypatch.setenv("TMPDIR", "/tmp")
+    (tmp_path / "ansible.cfg").write_text("[defaults]\n")
+    home = tmp_path / "home"
+    run_ansible_playbook(
+        ["ansible-playbook", "review.yml"],
+        playbook_root=tmp_path,
+        verbose=False,
+        home=home,
+    )
+    assert recorded["env"]["TMPDIR"] == str(home / ".cache" / "ansible-plaibook" / "tmp")
+    assert recorded["env"]["TMPDIR"] != "/tmp"
 
 
 def test_materialize_playbook_share_copies_playbook_tree(tmp_path):

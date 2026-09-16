@@ -21,6 +21,7 @@ DEFAULT_PLAYBOOK_TIMEOUT_SECONDS = 3600
 RUN_ID_CHARS = string.ascii_letters + string.digits
 RUN_ID_LENGTH = 16
 CACHE_DIRNAME = "ansible-plaibook"
+RUNTIME_TMP_DIRNAME = "tmp"
 
 
 class PlaybookNotFoundError(FileNotFoundError):
@@ -47,6 +48,21 @@ def generate_run_id() -> str:
 def last_run_dir(home: Path | None = None) -> Path:
     root = home if home is not None else Path.home()
     return root / ".cache" / CACHE_DIRNAME
+
+
+def runtime_tmp_dir(home: Path | None = None) -> Path:
+    """Scratch for clones, checklists, and spinner files — not /tmp.
+
+    macOS XProtect treats newly-executed scripts under /tmp as droppers.
+    Keep plaibook-owned temp under the per-user cache instead.
+    """
+    path = last_run_dir(home) / RUNTIME_TMP_DIRNAME
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+    return path
 
 
 def last_run_path(run_id: str, home: Path | None = None) -> Path:
@@ -203,6 +219,7 @@ def run_ansible_playbook(
     if env:
         merged.update(env)
     merged["ANSIBLE_CONFIG"] = str(playbook_root / ANSIBLE_CFG_NAME)
+    merged["TMPDIR"] = str(runtime_tmp_dir(home))
     merge_collections_path(merged, home=home)
     kwargs: dict = {
         "args": command,

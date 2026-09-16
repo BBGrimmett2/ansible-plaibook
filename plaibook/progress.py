@@ -166,9 +166,9 @@ def clone_url_from_task_args(args: object) -> str | None:
     return None
 
 
-def create_progress_file() -> tuple[str, str]:
+def create_progress_file(*, directory: str | None = None) -> tuple[str, str]:
     """Private 0o700 dir + 0o600 file for the spinner. Caller deletes both."""
-    progress_dir = tempfile.mkdtemp(prefix=PROGRESS_FILE_PREFIX)
+    progress_dir = tempfile.mkdtemp(prefix=PROGRESS_FILE_PREFIX, dir=directory)
     os.chmod(progress_dir, 0o700)
     fd, progress_path = tempfile.mkstemp(
         prefix=PROGRESS_FILE_PREFIX,
