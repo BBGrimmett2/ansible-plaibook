@@ -92,6 +92,18 @@ def test_ensure_collections_reinstalls_when_requirements_change(tmp_path, monkey
     assert "Updating" in "".join(err)
 
 
+def test_ensure_collections_refuses_dangling_symlink_dest(tmp_path):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text("collections: []\n")
+    home = tmp_path / "home"
+    cache = home / ".cache" / "ansible-plaibook"
+    cache.mkdir(parents=True)
+    (cache / "collections").symlink_to(tmp_path / "missing")
+    with pytest.raises(CollectionInstallError, match="symlink"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+
+
 def test_ensure_collections_refuses_symlink_dest(tmp_path):
     playbook = tmp_path / "playbook"
     playbook.mkdir()

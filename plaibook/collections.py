@@ -65,7 +65,8 @@ def ensure_collections(
         return None
 
     dest = collections_dir(home)
-    if dest.exists() and dest.is_symlink():
+    # exists() is false for a dangling symlink; is_symlink() is not.
+    if dest.is_symlink():
         raise CollectionInstallError(
             f"{dest} is a symlink; plaibook will not install collections "
             f"through it. Remove the symlink so {CACHE_DIRNAME} can own this cache."

@@ -8,7 +8,6 @@ name: Publish to PyPI
 on:
   release:
     types: [published]
-  workflow_dispatch:
 
 permissions: {}
 
@@ -67,6 +66,7 @@ jobs:
   publish:
     name: Upload to PyPI
     needs: build
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment:
       name: pypi

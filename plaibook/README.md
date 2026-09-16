@@ -46,6 +46,8 @@ release, on your PyPI account:
    restrict to tagged releases if you want a human gate.
 3. After this lands on `main`, publish a GitHub Release whose tag
    matches `pyproject.toml` `version` (first cut: `v0.1.0`).
+   `publish.yml` has no `workflow_dispatch`; only a published release
+   can upload.
 
 A pending publisher does **not** reserve the name until that first
 successful upload. Cut the release soon after configuring it.
