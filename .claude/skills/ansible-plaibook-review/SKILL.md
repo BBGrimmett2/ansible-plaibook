@@ -28,10 +28,11 @@ only.
 The wheel vendors `review.yml`. `uv sync --extra dev` from this
 checkout puts both console scripts on PATH in the project's env. The
 CLI locates `review.yml` from the install (bundled share, package
-parents, `PLAIBOOK_ROOT`, or cwd parents) and leaves the caller's cwd
-alone, so `plai review` / `review --commit` still reviews the repo you
-are in. First `plai review` installs Galaxy collections into
-`~/.cache/ansible-plaibook/collections` (never `~/.ansible`).
+parents, or `PLAIBOOK_ROOT`) and leaves the caller's cwd alone, so
+`plai review` / `review --commit` still reviews the repo you are in
+without executing that repo's own `review.yml`. First `plai review`
+installs Galaxy collections into `~/.cache/ansible-plaibook/collections`
+(never `~/.ansible`).
 
 ```bash
 plai review

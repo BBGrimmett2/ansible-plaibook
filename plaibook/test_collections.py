@@ -118,6 +118,32 @@ def test_ensure_collections_refuses_symlink_dest(tmp_path):
         ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
 
 
+def test_ensure_collections_refuses_regular_file_dest(tmp_path):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text("collections: []\n")
+    home = tmp_path / "home"
+    cache = home / ".cache" / "ansible-plaibook"
+    cache.mkdir(parents=True)
+    (cache / "collections").write_text("not a directory\n")
+    with pytest.raises(CollectionInstallError, match="not a directory"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+
+
+def test_ensure_collections_missing_galaxy_bin_is_collection_error(tmp_path, monkeypatch):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text("collections: []\n")
+    home = tmp_path / "home"
+
+    def boom():
+        raise FileNotFoundError("ansible-galaxy")
+
+    monkeypatch.setattr("plaibook.collections.ansible_galaxy_bin", boom)
+    with pytest.raises(CollectionInstallError, match="ansible-galaxy not found"):
+        ensure_collections(playbook, home=home)
+
+
 def test_ensure_collections_surfaces_galaxy_failure(tmp_path, monkeypatch):
     playbook = tmp_path / "playbook"
     playbook.mkdir()

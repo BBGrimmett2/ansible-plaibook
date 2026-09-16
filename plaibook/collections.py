@@ -71,7 +71,17 @@ def ensure_collections(
             f"{dest} is a symlink; plaibook will not install collections "
             f"through it. Remove the symlink so {CACHE_DIRNAME} can own this cache."
         )
-    dest.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and not dest.is_dir():
+        raise CollectionInstallError(
+            f"{dest} exists and is not a directory. Remove it so "
+            f"{CACHE_DIRNAME} can own this cache."
+        )
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise CollectionInstallError(
+            f"Cannot create collections cache {dest}: {exc}"
+        ) from exc
 
     digest = hashlib.sha256(requirements.read_bytes()).hexdigest()
     stamp = dest / STAMP_NAME
@@ -88,23 +98,23 @@ def ensure_collections(
             )
         stderr.flush()
 
-    command = [
-        galaxy_bin or ansible_galaxy_bin(),
-        "collection",
-        "install",
-        "-r",
-        str(requirements),
-        "-p",
-        str(dest),
-        "--force",
-    ]
-    merged = os.environ.copy()
-    if env:
-        merged.update(env)
-    _quiet_git_env(merged)
-    merged.setdefault("GIT_TERMINAL_PROMPT", "0")
-    merged.setdefault("ANSIBLE_FORCE_COLOR", "0")
     try:
+        command = [
+            galaxy_bin or ansible_galaxy_bin(),
+            "collection",
+            "install",
+            "-r",
+            str(requirements),
+            "-p",
+            str(dest),
+            "--force",
+        ]
+        merged = os.environ.copy()
+        if env:
+            merged.update(env)
+        _quiet_git_env(merged)
+        merged.setdefault("GIT_TERMINAL_PROMPT", "0")
+        merged.setdefault("ANSIBLE_FORCE_COLOR", "0")
         completed = subprocess.run(
             command,
             env=merged,

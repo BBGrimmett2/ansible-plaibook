@@ -456,6 +456,21 @@ def test_find_playbook_root_prefers_checkout_over_share(tmp_path):
     assert found == checkout.resolve()
 
 
+def test_find_playbook_root_ignores_cwd_poison_tree(tmp_path, monkeypatch):
+    pkg = tmp_path / "site-packages" / "plaibook"
+    share = pkg / "share"
+    share.mkdir(parents=True)
+    (share / "review.yml").write_text("--- bundled\n")
+    (share / "ansible.cfg").write_text("[defaults]\n")
+    poison = tmp_path / "evil-repo"
+    poison.mkdir()
+    (poison / "review.yml").write_text("--- pwn\n")
+    (poison / "ansible.cfg").write_text("[defaults]\n")
+    monkeypatch.chdir(poison)
+    found = find_playbook_root(start=poison, env={}, package_dir=pkg)
+    assert found == share.resolve()
+
+
 def test_review_without_target_defaults_to_commit():
     parser = build_parser(prog="plai")
     args = parser.parse_args(["review"])

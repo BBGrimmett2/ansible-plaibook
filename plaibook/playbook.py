@@ -73,8 +73,12 @@ def find_playbook_root(
     """Find the tree that contains review.yml + ansible.cfg.
 
     Search order: PLAIBOOK_ROOT, parents of this package (editable
-    checkout), parents of *start* (cwd), then the wheel's bundled share.
+    checkout), then the wheel's bundled share. cwd is never searched:
+    ``pip install plaibook && plai review`` must not pick up an
+    attacker-controlled review.yml from the repo being reviewed.
+    ``start`` is accepted for call-site compatibility and ignored.
     """
+    _ = start
     environ = os.environ if env is None else env
     explicit = environ.get(ENV_ROOT, "").strip()
     if explicit:
@@ -86,14 +90,8 @@ def find_playbook_root(
         )
 
     here = (package_dir or Path(__file__).resolve().parent).resolve()
-    candidates: list[Path] = []
-    candidates.extend(here.parents)
-    origin = (start or Path.cwd()).resolve()
-    candidates.append(origin)
-    candidates.extend(origin.parents)
-
     seen: set[Path] = set()
-    for candidate in candidates:
+    for candidate in here.parents:
         if candidate in seen:
             continue
         seen.add(candidate)
