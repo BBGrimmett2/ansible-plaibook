@@ -61,19 +61,21 @@ jobs:
         run: |
           set +e
           uv run --python "${{ matrix.python-version }}" ansible-lint --offline -f pep8 \
-            | tee lint.pep8
-          rc=${PIPESTATUS[0]}
+            > lint.out 2>&1
+          rc=$?
+          cat lint.out
           if [ "$rc" -ne 0 ]; then
-            echo "::error::ansible-lint exited ${rc}"
+            echo "::error::ansible-lint exited ${rc} ($(wc -l < lint.out) output lines)"
             i=0
-            while IFS= read -r line && [ "$i" -lt 40 ]; do
+            while IFS= read -r line && [ "$i" -lt 50 ]; do
               echo "::error::${line}"
               i=$((i + 1))
-            done < lint.pep8
-            echo "::group::installed collections"
+            done < lint.out
+            echo "::error::collections dest ${{ runner.temp }}/plaibook-collections"
             find "${{ runner.temp }}/plaibook-collections/ansible_collections" \
-              -mindepth 2 -maxdepth 2 -type d || true
-            echo "::endgroup::"
+              -mindepth 2 -maxdepth 2 -type d 2>/dev/null | while IFS= read -r d; do
+              echo "::error::installed ${d}"
+            done
           fi
           exit "$rc"
 
