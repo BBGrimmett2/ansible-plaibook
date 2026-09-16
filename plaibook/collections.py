@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 from typing import TextIO
 
+import yaml
+
 from plaibook.playbook import (
     CACHE_DIRNAME,
     ansible_tool_bin,
@@ -45,27 +47,38 @@ def merge_collections_path(env: dict[str, str], *, home: Path | None = None) -> 
     env[ENV_COLLECTIONS_PLURAL] = merged
 
 
-def _collections_tree_present(dest: Path) -> bool:
-    """True when dest looks like a galaxy -p install, not an empty stamped dir."""
+def _required_collection_count(requirements: Path) -> int:
+    data = yaml.safe_load(requirements.read_bytes()) or {}
+    cols = data.get("collections") or []
+    return len(cols) if isinstance(cols, list) else 0
+
+
+def _installed_collection_count(dest: Path) -> int:
+    """Count namespace/name dirs that look like a galaxy install."""
     root = dest / "ansible_collections"
     if not root.is_dir():
-        return False
-    for marker in root.glob("*/*/MANIFEST.json"):
-        if marker.is_file():
-            return True
-    for marker in root.glob("*/*/galaxy.yml"):
-        if marker.is_file():
-            return True
-    return False
+        return 0
+    found: set[tuple[str, str]] = set()
+    for ns in root.iterdir():
+        if not ns.is_dir() or ns.name.startswith("."):
+            continue
+        for name in ns.iterdir():
+            if not name.is_dir():
+                continue
+            if (name / "MANIFEST.json").is_file() or (name / "galaxy.yml").is_file():
+                found.add((ns.name, name.name))
+    return len(found)
 
 
-def _cache_matches(dest: Path, digest: str) -> bool:
+def _cache_matches(dest: Path, digest: str, expected: int) -> bool:
     stamp = dest / STAMP_NAME
     if not stamp.is_file():
         return False
     if stamp.read_text(encoding="utf-8").strip() != digest:
         return False
-    return _collections_tree_present(dest)
+    if expected <= 0:
+        return True
+    return _installed_collection_count(dest) >= expected
 
 
 def ensure_collections(
@@ -107,8 +120,9 @@ def ensure_collections(
         ) from exc
 
     digest = hashlib.sha256(requirements.read_bytes()).hexdigest()
+    expected = _required_collection_count(requirements)
     stamp = dest / STAMP_NAME
-    if _cache_matches(dest, digest):
+    if _cache_matches(dest, digest, expected):
         return dest
 
     if stderr is not None:

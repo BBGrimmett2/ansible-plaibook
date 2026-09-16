@@ -56,9 +56,6 @@ def test_ensure_collections_installs_into_isolated_cache(tmp_path, monkeypatch):
     assert kwargs["capture_output"] is True
     stamp = dest / ".requirements.sha256"
     assert stamp.is_file()
-    coll = dest / "ansible_collections" / "aknochow" / "cursor"
-    coll.mkdir(parents=True)
-    (coll / "MANIFEST.json").write_text("{}\n")
 
     calls.clear()
     again = ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
@@ -100,7 +97,7 @@ def test_ensure_collections_reinstalls_when_stamp_tree_missing(tmp_path, monkeyp
     playbook = tmp_path / "playbook"
     playbook.mkdir()
     req = playbook / "collections-requirements.yml"
-    req.write_text("collections: []\n")
+    req.write_text("collections:\n  - name: ansible.posix\n")
     home = tmp_path / "home"
     dest = collections_dir(home)
     dest.mkdir(parents=True)
@@ -125,6 +122,55 @@ def test_ensure_collections_reinstalls_when_stamp_tree_missing(tmp_path, monkeyp
     ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy", stderr=Err())
     assert calls
     assert "cache incomplete" in "".join(err)
+
+
+def test_ensure_collections_reinstalls_when_a_required_collection_is_missing(tmp_path, monkeypatch):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    req = playbook / "collections-requirements.yml"
+    req.write_text("collections:\n  - name: ansible.posix\n  - name: kubernetes.core\n")
+    home = tmp_path / "home"
+    dest = collections_dir(home)
+    dest.mkdir(parents=True)
+    digest = hashlib.sha256(req.read_bytes()).hexdigest()
+    (dest / ".requirements.sha256").write_text(digest + "\n")
+    one = dest / "ansible_collections" / "ansible" / "posix"
+    one.mkdir(parents=True)
+    (one / "MANIFEST.json").write_text("{}\n")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    assert calls
+
+
+def test_ensure_collections_skips_when_all_required_collections_are_present(tmp_path, monkeypatch):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    req = playbook / "collections-requirements.yml"
+    req.write_text("collections:\n  - name: ansible.posix\n  - name: kubernetes.core\n")
+    home = tmp_path / "home"
+    dest = collections_dir(home)
+    for ns, name in (("ansible", "posix"), ("kubernetes", "core")):
+        coll = dest / "ansible_collections" / ns / name
+        coll.mkdir(parents=True)
+        (coll / "MANIFEST.json").write_text("{}\n")
+    digest = hashlib.sha256(req.read_bytes()).hexdigest()
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / ".requirements.sha256").write_text(digest + "\n")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    assert calls == []
 
 
 def test_ensure_collections_refuses_dangling_symlink_dest(tmp_path):
