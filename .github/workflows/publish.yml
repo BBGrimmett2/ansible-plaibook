@@ -1,9 +1,14 @@
 name: Publish to PyPI
 
 # First release: create a pending trusted publisher on PyPI, add a GitHub
-# environment named `pypi`, merge this workflow, then publish a GitHub Release.
-# Do not store a PyPI API token. The workflow filename (`publish.yml`) is
-# load-bearing — it must match the pending publisher exactly.
+# environment named `pypi` with required reviewers and a v* tag rule, merge
+# this workflow, then publish a GitHub Release. Do not store a PyPI API token.
+# The workflow filename (`publish.yml`) is load-bearing — it must match the
+# pending publisher exactly.
+#
+# Human gate: GitHub Environment `pypi` (reviewers + tag rules). YAML cannot
+# require those. Workflow-side controls: no workflow_dispatch, skip
+# prereleases, tag must equal v${project.version}.
 
 on:
   release:

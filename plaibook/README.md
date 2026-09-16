@@ -42,8 +42,9 @@ release, on your PyPI account:
    project `plaibook`, owner `aknochow`, repo `ansible-plaibook`,
    workflow `publish.yml`, environment `pypi`.
 2. GitHub repo **Settings → Environments → New environment**: name
-   `pypi`, URL `https://pypi.org/p/plaibook`. Require a reviewer and
-   restrict to tagged releases if you want a human gate.
+   `pypi`, URL `https://pypi.org/p/plaibook`. **Required reviewers** and
+   a `v*` tag rule are the human publish gate (YAML cannot require
+   them). Restrict deployments to those tags.
 3. After this lands on `main`, publish a GitHub Release whose tag
    matches `pyproject.toml` `version` (first cut: `v0.1.0`).
    `publish.yml` has no `workflow_dispatch`; only a non-prerelease

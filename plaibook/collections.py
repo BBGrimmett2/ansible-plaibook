@@ -45,6 +45,29 @@ def merge_collections_path(env: dict[str, str], *, home: Path | None = None) -> 
     env[ENV_COLLECTIONS_PLURAL] = merged
 
 
+def _collections_tree_present(dest: Path) -> bool:
+    """True when dest looks like a galaxy -p install, not an empty stamped dir."""
+    root = dest / "ansible_collections"
+    if not root.is_dir():
+        return False
+    for marker in root.glob("*/*/MANIFEST.json"):
+        if marker.is_file():
+            return True
+    for marker in root.glob("*/*/galaxy.yml"):
+        if marker.is_file():
+            return True
+    return False
+
+
+def _cache_matches(dest: Path, digest: str) -> bool:
+    stamp = dest / STAMP_NAME
+    if not stamp.is_file():
+        return False
+    if stamp.read_text(encoding="utf-8").strip() != digest:
+        return False
+    return _collections_tree_present(dest)
+
+
 def ensure_collections(
     playbook_root: Path,
     *,
@@ -85,11 +108,13 @@ def ensure_collections(
 
     digest = hashlib.sha256(requirements.read_bytes()).hexdigest()
     stamp = dest / STAMP_NAME
-    if stamp.is_file() and stamp.read_text(encoding="utf-8").strip() == digest:
+    if _cache_matches(dest, digest):
         return dest
 
     if stderr is not None:
-        if stamp.is_file():
+        if stamp.is_file() and stamp.read_text(encoding="utf-8").strip() == digest:
+            stderr.write("Updating Ansible collections (cache incomplete)…\n")
+        elif stamp.is_file():
             stderr.write("Updating Ansible collections (pin change)…\n")
         else:
             stderr.write(

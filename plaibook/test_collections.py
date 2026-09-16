@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -55,6 +56,9 @@ def test_ensure_collections_installs_into_isolated_cache(tmp_path, monkeypatch):
     assert kwargs["capture_output"] is True
     stamp = dest / ".requirements.sha256"
     assert stamp.is_file()
+    coll = dest / "ansible_collections" / "aknochow" / "cursor"
+    coll.mkdir(parents=True)
+    (coll / "MANIFEST.json").write_text("{}\n")
 
     calls.clear()
     again = ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
@@ -90,6 +94,37 @@ def test_ensure_collections_reinstalls_when_requirements_change(tmp_path, monkey
     ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy", stderr=Err())
     assert calls
     assert "Updating" in "".join(err)
+
+
+def test_ensure_collections_reinstalls_when_stamp_tree_missing(tmp_path, monkeypatch):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    req = playbook / "collections-requirements.yml"
+    req.write_text("collections: []\n")
+    home = tmp_path / "home"
+    dest = collections_dir(home)
+    dest.mkdir(parents=True)
+    digest = hashlib.sha256(req.read_bytes()).hexdigest()
+    (dest / ".requirements.sha256").write_text(digest + "\n")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    err = []
+
+    class Err:
+        def write(self, text):
+            err.append(text)
+
+        def flush(self):
+            pass
+
+    ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy", stderr=Err())
+    assert calls
+    assert "cache incomplete" in "".join(err)
 
 
 def test_ensure_collections_refuses_dangling_symlink_dest(tmp_path):
