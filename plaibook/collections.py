@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import os
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TextIO
+from typing import Iterator, TextIO
 from urllib.parse import urlparse
 
 import yaml
@@ -21,6 +23,7 @@ from plaibook.playbook import (
 REQUIREMENTS_NAME = "collections-requirements.yml"
 COLLECTIONS_DIRNAME = "collections"
 STAMP_NAME = ".requirements.sha256"
+LOCK_NAME = "collections.lock"
 ENV_COLLECTIONS = "ANSIBLE_COLLECTIONS_PATH"
 ENV_COLLECTIONS_LEGACY = "ANSIBLE_COLLECTIONS_PATHS"
 GALAXY_TIMEOUT_SECONDS = 600
@@ -36,6 +39,33 @@ def ansible_galaxy_bin() -> str:
 
 def collections_dir(home: Path | None = None) -> Path:
     return last_run_dir(home) / COLLECTIONS_DIRNAME
+
+
+def collections_lock_path(home: Path | None = None) -> Path:
+    """Lock file beside the cache dir, not inside ``-p dest`` (galaxy --force)."""
+    return last_run_dir(home) / LOCK_NAME
+
+
+@contextmanager
+def _exclusive_collections_lock(home: Path | None = None) -> Iterator[None]:
+    """Serialize cache check, ansible-galaxy, and stamp write on this machine.
+
+    POSIX ``fcntl.flock`` only. Windows is not a supported plaibook host.
+    """
+    lock_path = collections_lock_path(home)
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as exc:
+        raise CollectionInstallError(f"Cannot open collections lock {lock_path}: {exc}") from exc
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as exc:
+            raise CollectionInstallError(f"Cannot lock collections cache {lock_path}: {exc}") from exc
+        yield
+    finally:
+        os.close(fd)
 
 
 def merge_collections_path(env: dict[str, str], *, home: Path | None = None) -> None:
@@ -167,60 +197,66 @@ def ensure_collections(
     digest = hashlib.sha256(requirements.read_bytes()).hexdigest()
     required = requirement_collection_keys(requirements)
     stamp = dest / STAMP_NAME
-    if _cache_matches(dest, digest, required):
+    with _exclusive_collections_lock(home):
+        if _cache_matches(dest, digest, required):
+            return dest
+
+        if stderr is not None:
+            if stamp.is_file() and stamp.read_text(encoding="utf-8").strip() == digest:
+                stderr.write("Updating Ansible collections (cache incomplete)…\n")
+            elif stamp.is_file():
+                stderr.write("Updating Ansible collections (pin change)…\n")
+            else:
+                stderr.write(
+                    "Installing Ansible collections (first run, into "
+                    f"~/.cache/{CACHE_DIRNAME}/collections)…\n"
+                )
+            stderr.flush()
+
+        try:
+            command = [
+                galaxy_bin or ansible_galaxy_bin(),
+                "collection",
+                "install",
+                "-r",
+                str(requirements),
+                "-p",
+                str(dest),
+                "--force",
+            ]
+            merged = os.environ.copy()
+            if env:
+                merged.update(env)
+            merge_collections_path(merged, home=home)
+            _quiet_git_env(merged)
+            merged.setdefault("GIT_TERMINAL_PROMPT", "0")
+            merged.setdefault("ANSIBLE_FORCE_COLOR", "0")
+            completed = subprocess.run(
+                command,
+                env=merged,
+                capture_output=True,
+                text=True,
+                timeout=GALAXY_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise CollectionInstallError(
+                "ansible-galaxy not found next to this interpreter or on PATH. "
+                "Reinstall plaibook (`pip install plaibook`); ansible-core is a dependency."
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise CollectionInstallError(
+                f"ansible-galaxy timed out after {GALAXY_TIMEOUT_SECONDS}s installing "
+                f"collections into {dest}."
+            ) from exc
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "").strip()
+            raise CollectionInstallError(
+                f"ansible-galaxy failed installing collections into {dest}"
+                + (f":\n{detail}" if detail else ".")
+            )
+        stamp.write_text(digest + "\n", encoding="utf-8")
         return dest
-
-    if stderr is not None:
-        if stamp.is_file() and stamp.read_text(encoding="utf-8").strip() == digest:
-            stderr.write("Updating Ansible collections (cache incomplete)…\n")
-        elif stamp.is_file():
-            stderr.write("Updating Ansible collections (pin change)…\n")
-        else:
-            stderr.write(f"Installing Ansible collections (first run, into ~/.cache/{CACHE_DIRNAME}/collections)…\n")
-        stderr.flush()
-
-    try:
-        command = [
-            galaxy_bin or ansible_galaxy_bin(),
-            "collection",
-            "install",
-            "-r",
-            str(requirements),
-            "-p",
-            str(dest),
-            "--force",
-        ]
-        merged = os.environ.copy()
-        if env:
-            merged.update(env)
-        merge_collections_path(merged, home=home)
-        _quiet_git_env(merged)
-        merged.setdefault("GIT_TERMINAL_PROMPT", "0")
-        merged.setdefault("ANSIBLE_FORCE_COLOR", "0")
-        completed = subprocess.run(
-            command,
-            env=merged,
-            capture_output=True,
-            text=True,
-            timeout=GALAXY_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except FileNotFoundError as exc:
-        raise CollectionInstallError(
-            "ansible-galaxy not found next to this interpreter or on PATH. "
-            "Reinstall plaibook (`pip install plaibook`); ansible-core is a dependency."
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise CollectionInstallError(
-            f"ansible-galaxy timed out after {GALAXY_TIMEOUT_SECONDS}s installing collections into {dest}."
-        ) from exc
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "").strip()
-        raise CollectionInstallError(
-            f"ansible-galaxy failed installing collections into {dest}" + (f":\n{detail}" if detail else ".")
-        )
-    stamp.write_text(digest + "\n", encoding="utf-8")
-    return dest
 
 
 def _quiet_git_env(env: dict[str, str]) -> None:

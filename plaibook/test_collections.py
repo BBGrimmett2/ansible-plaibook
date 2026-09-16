@@ -15,6 +15,7 @@ from plaibook.collections import (
     collection_is_installed,
     collection_key_from_requirement,
     collections_dir,
+    collections_lock_path,
     ensure_collections,
     merge_collections_path,
     requirement_collection_keys,
@@ -399,3 +400,132 @@ def test_materialize_playbook_share_copies_playbook_tree(tmp_path):
     assert (dest / "roles" / "keep" / "ok.txt").is_file()
     assert not (dest / "roles" / "__pycache__").exists()
     assert not (dest / "roles" / "keep" / "test_not_shipped.py").exists()
+
+
+def test_collections_lock_path_is_beside_cache_not_inside(tmp_path):
+    home = tmp_path / "home"
+    dest = collections_dir(home)
+    lock = collections_lock_path(home)
+    assert lock.parent == dest.parent
+    assert lock.name == "collections.lock"
+    assert dest.name == "collections"
+    assert dest not in lock.parents
+
+
+def test_ensure_collections_holds_flock_during_galaxy(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text("collections: []\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    probe_codes = []
+    real_run = subprocess.run
+
+    def fake_run(cmd, **kwargs):
+        lock_path = collections_lock_path(home)
+        assert lock_path.is_file()
+        probe = real_run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import fcntl, os, sys\n"
+                    f"fd = os.open({str(lock_path)!r}, os.O_RDWR)\n"
+                    "try:\n"
+                    "    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+                    "except BlockingIOError:\n"
+                    "    sys.exit(2)\n"
+                    "else:\n"
+                    "    sys.exit(0)\n"
+                    "finally:\n"
+                    "    os.close(fd)\n"
+                ),
+            ],
+            check=False,
+        )
+        probe_codes.append(probe.returncode)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    dest = ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    assert dest == collections_dir(home)
+    assert probe_codes == [2], "a sibling process must not take LOCK_EX while galaxy runs"
+    assert collections_lock_path(home).parent == dest.parent
+    assert not (dest / "collections.lock").exists()
+
+
+def _ensure_collections_worker(playbook: str, home: str, galaxy: str, result_path: str) -> None:
+    dest = ensure_collections(Path(playbook), home=Path(home), galaxy_bin=galaxy)
+    Path(result_path).write_text(str(dest))
+
+
+def test_ensure_collections_serializes_two_processes(tmp_path):
+    import multiprocessing
+    import sys
+    import time
+
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text("collections: []\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    log = tmp_path / "galaxy.log"
+    release = tmp_path / "release"
+    fake_galaxy = tmp_path / "ansible-galaxy"
+    fake_galaxy.write_text(
+        f"#!{sys.executable}\n"
+        "import pathlib, sys, time\n"
+        f"log = pathlib.Path({str(log)!r})\n"
+        f"release = pathlib.Path({str(release)!r})\n"
+        "with log.open('a') as fh:\n"
+        "    fh.write('start\\n')\n"
+        "    fh.flush()\n"
+        "deadline = time.time() + 10\n"
+        "while time.time() < deadline and not release.exists():\n"
+        "    time.sleep(0.05)\n"
+        "with log.open('a') as fh:\n"
+        "    fh.write('end\\n')\n"
+        "sys.exit(0)\n"
+    )
+    fake_galaxy.chmod(0o755)
+
+    ctx = multiprocessing.get_context("spawn")
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    p1 = ctx.Process(
+        target=_ensure_collections_worker,
+        args=(str(playbook), str(home), str(fake_galaxy), str(first)),
+    )
+    p2 = ctx.Process(
+        target=_ensure_collections_worker,
+        args=(str(playbook), str(home), str(fake_galaxy), str(second)),
+    )
+    p1.start()
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if log.is_file() and "start" in log.read_text(encoding="utf-8"):
+            break
+        time.sleep(0.05)
+    else:
+        p1.kill()
+        raise AssertionError("first ansible-galaxy did not start")
+    p2.start()
+    time.sleep(0.4)
+    assert log.read_text(encoding="utf-8").count("start") == 1
+    release.write_text("go\n", encoding="utf-8")
+    p1.join(timeout=10)
+    p2.join(timeout=10)
+    assert p1.exitcode == 0
+    assert p2.exitcode == 0
+    dest = collections_dir(home)
+    assert first.read_text(encoding="utf-8") == str(dest)
+    assert second.read_text(encoding="utf-8") == str(dest)
+    assert log.read_text(encoding="utf-8").count("start") == 1
+    assert log.read_text(encoding="utf-8").count("end") == 1
+    assert (dest / ".requirements.sha256").is_file()
+    lock = collections_lock_path(home)
+    assert lock.is_file()
+    assert lock.parent == dest.parent
