@@ -55,15 +55,44 @@ jobs:
           uv run --python "${{ matrix.python-version }}" python scripts/ci-install-collections.py
 
       - name: Run ansible-lint check
-        run: uv run --python ${{ matrix.python-version }} ansible-lint --offline
+        env:
+          ANSIBLE_COLLECTIONS_PATH: ${{ runner.temp }}/plaibook-collections
+          ANSIBLE_COLLECTIONS_PATHS: ${{ runner.temp }}/plaibook-collections
+        run: |
+          set +e
+          uv run --python "${{ matrix.python-version }}" ansible-lint --offline -f pep8 \
+            | tee lint.pep8
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::ansible-lint exited ${rc}"
+            i=0
+            while IFS= read -r line && [ "$i" -lt 40 ]; do
+              echo "::error::${line}"
+              i=$((i + 1))
+            done < lint.pep8
+            echo "::group::installed collections"
+            find "${{ runner.temp }}/plaibook-collections/ansible_collections" \
+              -mindepth 2 -maxdepth 2 -type d || true
+            echo "::endgroup::"
+          fi
+          exit "$rc"
 
       - name: Check playbook syntax
+        env:
+          ANSIBLE_COLLECTIONS_PATH: ${{ runner.temp }}/plaibook-collections
+          ANSIBLE_COLLECTIONS_PATHS: ${{ runner.temp }}/plaibook-collections
         run: uv run --python ${{ matrix.python-version }} ansible-playbook review.yml --syntax-check
 
       - name: Run pytest test suite
+        env:
+          ANSIBLE_COLLECTIONS_PATH: ${{ runner.temp }}/plaibook-collections
+          ANSIBLE_COLLECTIONS_PATHS: ${{ runner.temp }}/plaibook-collections
         run: uv run --python ${{ matrix.python-version }} pytest -v --tb=short
 
       - name: Run offline Ansible playbook tests
+        env:
+          ANSIBLE_COLLECTIONS_PATH: ${{ runner.temp }}/plaibook-collections
+          ANSIBLE_COLLECTIONS_PATHS: ${{ runner.temp }}/plaibook-collections
         run: uv run --python ${{ matrix.python-version }} ./scripts/run_playbook_tests.sh
 
   # Same lockfile audit collections inherit via collection-ci.yml. OSV over
