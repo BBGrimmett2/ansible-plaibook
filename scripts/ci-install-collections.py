@@ -23,6 +23,12 @@ from pathlib import Path
 
 import yaml
 
+from plaibook.collections import (
+    GALAXY_TIMEOUT_SECONDS,
+    collection_is_installed,
+    requirement_collection_keys,
+)
+
 REQUIREMENTS = Path("collections-requirements.yml")
 
 # Unpinned Galaxy names in collections-requirements.yml, plus the one
@@ -81,6 +87,22 @@ def _installed_count(dest: Path) -> int:
     return len(found)
 
 
+def _required_keys() -> list[tuple[str, str]]:
+    keys = list(requirement_collection_keys(REQUIREMENTS))
+    seen = set(keys)
+    for fqn in GALAXY_GITHUB_MIRRORS:
+        ns, name = fqn.split(".", 1)
+        key = (ns, name)
+        if key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return keys
+
+
+def _all_required_installed(dest: Path, required: list[tuple[str, str]]) -> bool:
+    return all(collection_is_installed(dest, ns, name) for ns, name in required)
+
+
 def _galaxy_bin() -> str:
     found = shutil.which("ansible-galaxy")
     if not found:
@@ -103,7 +125,7 @@ def _git(args: list[str], *, cwd: Path | None = None, token: str | None) -> None
             f"url.https://x-access-token:{token}@github.com/.insteadOf=https://github.com/",
         ]
     cmd += args
-    subprocess.run(cmd, cwd=cwd, check=True)
+    subprocess.run(cmd, cwd=cwd, check=True, timeout=GALAXY_TIMEOUT_SECONDS)
 
 
 def _clone_at_ref(url: str, ref: str, dest: Path, token: str | None) -> None:
@@ -118,7 +140,7 @@ def _clone_at_ref(url: str, ref: str, dest: Path, token: str | None) -> None:
             _git(["fetch", "--depth", "1", "origin", ref], cwd=dest, token=token)
             _git(["checkout", "FETCH_HEAD"], cwd=dest, token=token)
             return
-        except subprocess.CalledProcessError as exc:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             last_error = exc
             print(f"git fetch {url}@{ref} attempt {attempt} failed", flush=True)
             time.sleep(attempt * 4)
@@ -126,19 +148,23 @@ def _clone_at_ref(url: str, ref: str, dest: Path, token: str | None) -> None:
 
 
 def _install_from_dir(galaxy: str, source: Path, dest: Path) -> None:
-    completed = subprocess.run(
-        [
-            galaxy,
-            "collection",
-            "install",
-            str(source),
-            "-p",
-            str(dest),
-            "--force",
-            "--no-deps",
-        ],
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [
+                galaxy,
+                "collection",
+                "install",
+                str(source),
+                "-p",
+                str(dest),
+                "--force",
+                "--no-deps",
+            ],
+            check=False,
+            timeout=GALAXY_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SystemExit(f"ansible-galaxy install {source} timed out after {GALAXY_TIMEOUT_SECONDS}s") from exc
     if completed.returncode != 0:
         raise SystemExit(f"ansible-galaxy install {source} failed (exit {completed.returncode})")
 
@@ -148,19 +174,27 @@ def try_requirements_file(galaxy: str, dest: Path) -> bool:
     if os.environ.get("PLAIBOOK_CI_SKIP_GALAXY") == "1":
         print("Skipping ansible-galaxy -r (PLAIBOOK_CI_SKIP_GALAXY=1)", flush=True)
         return False
-    completed = subprocess.run(
-        [
-            galaxy,
-            "collection",
-            "install",
-            "-r",
-            str(REQUIREMENTS),
-            "-p",
-            str(dest),
-            "--force",
-        ],
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [
+                galaxy,
+                "collection",
+                "install",
+                "-r",
+                str(REQUIREMENTS),
+                "-p",
+                str(dest),
+                "--force",
+            ],
+            check=False,
+            timeout=GALAXY_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"ansible-galaxy -r timed out after {GALAXY_TIMEOUT_SECONDS}s",
+            flush=True,
+        )
+        return False
     if completed.returncode == 0:
         return True
     print(
@@ -206,17 +240,17 @@ def main() -> int:
     os.environ.setdefault("GIT_TERMINAL_PROMPT", "0")
     dest = _dest()
     cols = _requirements()
-    expected = len(cols)
-    if _installed_count(dest) >= expected:
+    required = _required_keys()
+    if _all_required_installed(dest, required):
         print(
-            f"Using cached collections ({_installed_count(dest)} installed, {expected} listed)",
+            f"Using cached collections ({_installed_count(dest)} installed, {len(required)} required)",
             flush=True,
         )
         return 0
 
     galaxy = _galaxy_bin()
     token = _git_token()
-    if try_requirements_file(galaxy, dest) and _installed_count(dest) >= expected:
+    if try_requirements_file(galaxy, dest) and _all_required_installed(dest, required):
         print(f"Installed {_installed_count(dest)} collections via -r", flush=True)
         return 0
 
@@ -226,14 +260,14 @@ def main() -> int:
     )
     install_git_sources(galaxy, dest, cols, token)
     install_galaxy_mirrors(galaxy, dest, token)
-    installed = _installed_count(dest)
-    if installed < expected:
+    if not _all_required_installed(dest, required):
+        missing = [f"{ns}.{name}" for ns, name in required if not collection_is_installed(dest, ns, name)]
         print(
-            f"ERROR: expected at least {expected} collections, found {installed}",
+            f"ERROR: missing required collections: {', '.join(missing)}",
             file=sys.stderr,
         )
         return 1
-    print(f"Installed {installed} collections via GitHub fallback", flush=True)
+    print(f"Installed {_installed_count(dest)} collections via GitHub fallback", flush=True)
     return 0
 
 

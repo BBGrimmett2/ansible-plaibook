@@ -12,9 +12,12 @@ import pytest
 
 from plaibook.collections import (
     CollectionInstallError,
+    collection_is_installed,
+    collection_key_from_requirement,
     collections_dir,
     ensure_collections,
     merge_collections_path,
+    requirement_collection_keys,
 )
 from plaibook.playbook import run_ansible_playbook
 
@@ -171,6 +174,60 @@ def test_ensure_collections_skips_when_all_required_collections_are_present(tmp_
     monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
     ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
     assert calls == []
+
+
+def test_ensure_collections_reinstalls_when_a_dependency_masks_a_required_name(tmp_path, monkeypatch):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    req = playbook / "collections-requirements.yml"
+    req.write_text("collections:\n  - name: ansible.posix\n  - name: kubernetes.core\n")
+    home = tmp_path / "home"
+    dest = collections_dir(home)
+    dest.mkdir(parents=True)
+    digest = hashlib.sha256(req.read_bytes()).hexdigest()
+    (dest / ".requirements.sha256").write_text(digest + "\n")
+    # Two installed dirs (count would match) but kubernetes.core is missing;
+    # a dependency must not stand in for it.
+    for ns, name in (("ansible", "posix"), ("community", "general")):
+        coll = dest / "ansible_collections" / ns / name
+        coll.mkdir(parents=True)
+        (coll / "MANIFEST.json").write_text("{}\n")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    assert calls
+
+
+def test_requirement_collection_keys_maps_git_urls_and_fqcns(tmp_path):
+    req = tmp_path / "collections-requirements.yml"
+    req.write_text(
+        "collections:\n"
+        "  - name: https://github.com/aknochow/ansible-openshell.git\n"
+        "    type: git\n"
+        "  - name: community.general\n"
+        "  - name: kubernetes.core\n"
+        "  - name: ansible.posix\n"
+    )
+    assert requirement_collection_keys(req) == [
+        ("aknochow", "openshell"),
+        ("community", "general"),
+        ("kubernetes", "core"),
+        ("ansible", "posix"),
+    ]
+    assert collection_key_from_requirement(
+        {"name": "https://github.com/ansible-collections/ansible.posix.git", "type": "git"}
+    ) == ("ansible", "posix")
+    dest = tmp_path / "dest"
+    posix = dest / "ansible_collections" / "ansible" / "posix"
+    posix.mkdir(parents=True)
+    (posix / "MANIFEST.json").write_text("{}\n")
+    assert collection_is_installed(dest, "ansible", "posix")
+    assert not collection_is_installed(dest, "kubernetes", "core")
 
 
 def test_ensure_collections_refuses_dangling_symlink_dest(tmp_path):

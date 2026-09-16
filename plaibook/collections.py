@@ -8,6 +8,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import TextIO
+from urllib.parse import urlparse
 
 import yaml
 
@@ -50,38 +51,82 @@ def merge_collections_path(env: dict[str, str], *, home: Path | None = None) -> 
     env.pop(ENV_COLLECTIONS_LEGACY, None)
 
 
-def _required_collection_count(requirements: Path) -> int:
+def _key_from_fqcn(name: str) -> tuple[str, str] | None:
+    if "://" in name or "/" in name or name.endswith(".git"):
+        return None
+    ns, sep, rest = name.partition(".")
+    if sep and ns and rest:
+        return (ns, rest)
+    return None
+
+
+def _key_from_git_url(url: str) -> tuple[str, str] | None:
+    """Map a git collection URL to the ns/name dir ansible-galaxy installs."""
+    raw = url.removeprefix("git+")
+    if raw.startswith("git@"):
+        _, _, rest = raw.partition(":")
+        path = rest
+    else:
+        path = urlparse(raw).path.lstrip("/")
+    path = path.removesuffix(".git").rstrip("/")
+    parts = [p for p in path.split("/") if p]
+    if len(parts) < 2:
+        return None
+    owner, repo = parts[-2], parts[-1]
+    if repo.startswith("ansible-") and repo != "ansible-":
+        return (owner, repo[len("ansible-") :])
+    dotted = _key_from_fqcn(repo)
+    if dotted:
+        return dotted
+    return (owner, repo)
+
+
+def collection_key_from_requirement(col: object) -> tuple[str, str] | None:
+    """Return (namespace, name) for one collections-requirements.yml entry."""
+    if not isinstance(col, dict):
+        return None
+    name = col.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    if col.get("type") == "git" or name.startswith(("https://", "http://", "git+", "git@")):
+        return _key_from_git_url(name)
+    return _key_from_fqcn(name)
+
+
+def requirement_collection_keys(requirements: Path) -> list[tuple[str, str]]:
+    """Named collections the stamp must contain — not a raw directory count."""
     data = yaml.safe_load(requirements.read_bytes()) or {}
     cols = data.get("collections") or []
-    return len(cols) if isinstance(cols, list) else 0
+    if not isinstance(cols, list):
+        return []
+    keys: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for col in cols:
+        key = collection_key_from_requirement(col)
+        if key and key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return keys
 
 
-def _installed_collection_count(dest: Path) -> int:
-    """Count namespace/name dirs that look like a galaxy install."""
-    root = dest / "ansible_collections"
-    if not root.is_dir():
-        return 0
-    found: set[tuple[str, str]] = set()
-    for ns in root.iterdir():
-        if not ns.is_dir() or ns.name.startswith("."):
-            continue
-        for name in ns.iterdir():
-            if not name.is_dir():
-                continue
-            if (name / "MANIFEST.json").is_file() or (name / "galaxy.yml").is_file():
-                found.add((ns.name, name.name))
-    return len(found)
+def collection_is_installed(dest: Path, ns: str, name: str) -> bool:
+    coll = dest / "ansible_collections" / ns / name
+    return (coll / "MANIFEST.json").is_file() or (coll / "galaxy.yml").is_file()
 
 
-def _cache_matches(dest: Path, digest: str, expected: int) -> bool:
+def _all_required_installed(dest: Path, required: list[tuple[str, str]]) -> bool:
+    return all(collection_is_installed(dest, ns, name) for ns, name in required)
+
+
+def _cache_matches(dest: Path, digest: str, required: list[tuple[str, str]]) -> bool:
     stamp = dest / STAMP_NAME
     if not stamp.is_file():
         return False
     if stamp.read_text(encoding="utf-8").strip() != digest:
         return False
-    if expected <= 0:
+    if not required:
         return True
-    return _installed_collection_count(dest) >= expected
+    return _all_required_installed(dest, required)
 
 
 def ensure_collections(
@@ -112,20 +157,17 @@ def ensure_collections(
         )
     if dest.exists() and not dest.is_dir():
         raise CollectionInstallError(
-            f"{dest} exists and is not a directory. Remove it so "
-            f"{CACHE_DIRNAME} can own this cache."
+            f"{dest} exists and is not a directory. Remove it so {CACHE_DIRNAME} can own this cache."
         )
     try:
         dest.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise CollectionInstallError(
-            f"Cannot create collections cache {dest}: {exc}"
-        ) from exc
+        raise CollectionInstallError(f"Cannot create collections cache {dest}: {exc}") from exc
 
     digest = hashlib.sha256(requirements.read_bytes()).hexdigest()
-    expected = _required_collection_count(requirements)
+    required = requirement_collection_keys(requirements)
     stamp = dest / STAMP_NAME
-    if _cache_matches(dest, digest, expected):
+    if _cache_matches(dest, digest, required):
         return dest
 
     if stderr is not None:
@@ -134,10 +176,7 @@ def ensure_collections(
         elif stamp.is_file():
             stderr.write("Updating Ansible collections (pin change)…\n")
         else:
-            stderr.write(
-                "Installing Ansible collections (first run, into "
-                f"~/.cache/{CACHE_DIRNAME}/collections)…\n"
-            )
+            stderr.write(f"Installing Ansible collections (first run, into ~/.cache/{CACHE_DIRNAME}/collections)…\n")
         stderr.flush()
 
     try:
@@ -172,14 +211,12 @@ def ensure_collections(
         ) from exc
     except subprocess.TimeoutExpired as exc:
         raise CollectionInstallError(
-            f"ansible-galaxy timed out after {GALAXY_TIMEOUT_SECONDS}s installing "
-            f"collections into {dest}."
+            f"ansible-galaxy timed out after {GALAXY_TIMEOUT_SECONDS}s installing collections into {dest}."
         ) from exc
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
         raise CollectionInstallError(
-            f"ansible-galaxy failed installing collections into {dest}"
-            + (f":\n{detail}" if detail else ".")
+            f"ansible-galaxy failed installing collections into {dest}" + (f":\n{detail}" if detail else ".")
         )
     stamp.write_text(digest + "\n", encoding="utf-8")
     return dest
