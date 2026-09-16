@@ -250,7 +250,16 @@ def test_merge_collections_path_puts_cache_first(tmp_path):
     assert parts[0] == isolated
     assert parts[1] == "/opt/collections"
     assert parts.count(isolated) == 1
-    assert env["ANSIBLE_COLLECTIONS_PATHS"] == env["ANSIBLE_COLLECTIONS_PATH"]
+    assert "ANSIBLE_COLLECTIONS_PATHS" not in env
+
+
+def test_merge_collections_path_drops_legacy_paths_var(tmp_path):
+    home = tmp_path / "home"
+    isolated = str(collections_dir(home))
+    env = {"ANSIBLE_COLLECTIONS_PATHS": "/opt/legacy"}
+    merge_collections_path(env, home=home)
+    assert env["ANSIBLE_COLLECTIONS_PATH"].split(os.pathsep) == [isolated, "/opt/legacy"]
+    assert "ANSIBLE_COLLECTIONS_PATHS" not in env
 
 
 def test_run_ansible_playbook_sets_isolated_collections_path(tmp_path, monkeypatch):

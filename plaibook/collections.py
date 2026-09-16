@@ -21,7 +21,7 @@ REQUIREMENTS_NAME = "collections-requirements.yml"
 COLLECTIONS_DIRNAME = "collections"
 STAMP_NAME = ".requirements.sha256"
 ENV_COLLECTIONS = "ANSIBLE_COLLECTIONS_PATH"
-ENV_COLLECTIONS_PLURAL = "ANSIBLE_COLLECTIONS_PATHS"
+ENV_COLLECTIONS_LEGACY = "ANSIBLE_COLLECTIONS_PATHS"
 GALAXY_TIMEOUT_SECONDS = 600
 
 
@@ -38,13 +38,16 @@ def collections_dir(home: Path | None = None) -> Path:
 
 
 def merge_collections_path(env: dict[str, str], *, home: Path | None = None) -> None:
-    """Put the isolated cache first so a leftover ~/.ansible tree never wins."""
+    """Put the isolated cache first so a leftover ~/.ansible tree never wins.
+
+    ansible-core 2.19+ refuses to start when ANSIBLE_COLLECTIONS_PATHS is set.
+    Read the legacy name if present, then drop it.
+    """
     isolated = str(collections_dir(home))
-    raw = env.get(ENV_COLLECTIONS_PLURAL) or env.get(ENV_COLLECTIONS) or ""
+    raw = env.get(ENV_COLLECTIONS) or env.get(ENV_COLLECTIONS_LEGACY) or ""
     parts = [p for p in raw.split(os.pathsep) if p and p != isolated]
-    merged = os.pathsep.join([isolated, *parts])
-    env[ENV_COLLECTIONS] = merged
-    env[ENV_COLLECTIONS_PLURAL] = merged
+    env[ENV_COLLECTIONS] = os.pathsep.join([isolated, *parts])
+    env.pop(ENV_COLLECTIONS_LEGACY, None)
 
 
 def _required_collection_count(requirements: Path) -> int:

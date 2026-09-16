@@ -51,50 +51,26 @@ jobs:
           dest="${PLAIBOOK_COLLECTIONS_DEST}"
           mkdir -p "$dest"
           echo "ANSIBLE_COLLECTIONS_PATH=${dest}" >> "$GITHUB_ENV"
-          echo "ANSIBLE_COLLECTIONS_PATHS=${dest}" >> "$GITHUB_ENV"
           uv run --python "${{ matrix.python-version }}" python scripts/ci-install-collections.py
 
       - name: Run ansible-lint check
         env:
           ANSIBLE_COLLECTIONS_PATH: ${{ runner.temp }}/plaibook-collections
-          ANSIBLE_COLLECTIONS_PATHS: ${{ runner.temp }}/plaibook-collections
-        run: |
-          set +e
-          uv run --python "${{ matrix.python-version }}" ansible-lint --offline -f pep8 \
-            > lint.out 2>&1
-          rc=$?
-          cat lint.out
-          if [ "$rc" -ne 0 ]; then
-            echo "::error::ansible-lint exited ${rc} ($(wc -l < lint.out) output lines)"
-            i=0
-            while IFS= read -r line && [ "$i" -lt 50 ]; do
-              echo "::error::${line}"
-              i=$((i + 1))
-            done < lint.out
-            echo "::error::collections dest ${{ runner.temp }}/plaibook-collections"
-            find "${{ runner.temp }}/plaibook-collections/ansible_collections" \
-              -mindepth 2 -maxdepth 2 -type d 2>/dev/null | while IFS= read -r d; do
-              echo "::error::installed ${d}"
-            done
-          fi
-          exit "$rc"
+        run: uv run --python ${{ matrix.python-version }} ansible-lint --offline
 
       - name: Check playbook syntax
         env:
           ANSIBLE_COLLECTIONS_PATH: ${{ runner.temp }}/plaibook-collections
-          ANSIBLE_COLLECTIONS_PATHS: ${{ runner.temp }}/plaibook-collections
         run: uv run --python ${{ matrix.python-version }} ansible-playbook review.yml --syntax-check
 
       - name: Run pytest test suite
         env:
           ANSIBLE_COLLECTIONS_PATH: ${{ runner.temp }}/plaibook-collections
-          ANSIBLE_COLLECTIONS_PATHS: ${{ runner.temp }}/plaibook-collections
         run: uv run --python ${{ matrix.python-version }} pytest -v --tb=short
 
       - name: Run offline Ansible playbook tests
         env:
           ANSIBLE_COLLECTIONS_PATH: ${{ runner.temp }}/plaibook-collections
-          ANSIBLE_COLLECTIONS_PATHS: ${{ runner.temp }}/plaibook-collections
         run: uv run --python ${{ matrix.python-version }} ./scripts/run_playbook_tests.sh
 
   # Same lockfile audit collections inherit via collection-ci.yml. OSV over
