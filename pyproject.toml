@@ -64,6 +64,9 @@ build_py = "plaibook._setup_share.build_py"
 testpaths = ["plaibook", "action_plugins", "library", "roles/review/files/pr_review", "scripts"]
 python_files = ["test_*.py"]
 addopts = "-v"
+# uv sync / uv build materializes plaibook/share/. Skip it so pytest does
+# not collect the vendored copies of action_plugins/test_*.py (import-file mismatch).
+norecursedirs = [".*", "build", "dist", "node_modules", ".venv", "venv", "*.egg", "share"]
 
 [tool.ruff]
 line-length = 120

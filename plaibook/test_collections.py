@@ -175,6 +175,7 @@ def test_materialize_playbook_share_copies_playbook_tree(tmp_path):
         nested = repo / name / "keep"
         nested.mkdir(parents=True)
         (nested / "ok.txt").write_text("ok\n")
+        (nested / "test_not_shipped.py").write_text("no\n")
         junk = repo / name / "__pycache__"
         junk.mkdir()
         (junk / "x.pyc").write_text("no\n")
@@ -185,3 +186,4 @@ def test_materialize_playbook_share_copies_playbook_tree(tmp_path):
         assert (dest / name).read_text() == f"{name}\n"
     assert (dest / "roles" / "keep" / "ok.txt").is_file()
     assert not (dest / "roles" / "__pycache__").exists()
+    assert not (dest / "roles" / "keep" / "test_not_shipped.py").exists()

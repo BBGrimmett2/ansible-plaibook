@@ -26,6 +26,8 @@ _IGNORE = shutil.ignore_patterns(
     ".pytest_cache",
     "*.retry",
     ".git",
+    "test_*.py",
+    "tests",
 )
 
 
