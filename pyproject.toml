@@ -9,15 +9,34 @@ description = "Ansible-native AI code-review and bug-fix pipeline"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
+authors = [{ name = "Adam Knochowski", email = "aknochow@redhat.com" }]
+keywords = ["ansible", "code-review", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
     "ansible-core>=2.16.0,<2.20.0",
     "pyyaml>=6.0.0",
     "jinja2>=3.1.0",
+    "cursor-sdk>=1.0.31,<2.0.0",
 ]
 
 [project.scripts]
 plaibook = "plaibook.cli:main"
 plai = "plaibook.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/aknochow/ansible-plaibook"
+Issues = "https://github.com/aknochow/ansible-plaibook/issues"
+Source = "https://github.com/aknochow/ansible-plaibook"
+Documentation = "https://github.com/aknochow/ansible-plaibook/blob/main/docs/getting-started.md"
 
 [project.optional-dependencies]
 dev = [
@@ -26,16 +45,20 @@ dev = [
     "ruff>=0.9.0",
     "ansible-lint>=24.0.0",
 ]
-# Live agent_family=cursor reviews. CI mocks the SDK and does not install
-# this extra. The collection (aknochow.cursor) also depends on it; this
-# extra puts it on plaibook's uv interpreter so `uv run ansible-playbook`
-# can import cursor_sdk. Sync with: uv sync --extra dev --extra cursor
+# Cursor is the default first-run provider; keep the extra so
+# `pip install plaibook[cursor]` / `uv sync --extra cursor` still work.
 cursor = [
     "cursor-sdk>=1.0.31,<2.0.0",
 ]
 
 [tool.setuptools.packages.find]
-include = ["plaibook*", "action_plugins*", "filter_plugins*", "library*", "roles*", "scripts*"]
+include = ["plaibook*"]
+
+[tool.setuptools.package-data]
+plaibook = ["share/**/*"]
+
+[tool.setuptools.cmdclass]
+build_py = "plaibook._setup_share.build_py"
 
 [tool.pytest.ini_options]
 testpaths = ["plaibook", "action_plugins", "library", "roles/review/files/pr_review", "scripts"]

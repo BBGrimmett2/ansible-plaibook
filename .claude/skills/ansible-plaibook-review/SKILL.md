@@ -14,23 +14,27 @@ stdout.
 
 The human/skill/CI entry point is the **`plaibook` CLI**, also installed
 as **`plai`** (same `main`). The pip/uv distribution name is `plaibook`
-(not `plai`, taken on PyPI, and not `ansible-plaibook`). After
-`uv sync` / `pip install -e .` from this checkout, `plai review ...` and
-`plaibook review ...` are equivalent. Raw `ansible-playbook review.yml`
-stays the AAP / execution-environment / power-user path. See
-[`plaibook/README.md`](../../../plaibook/README.md) for the CLI product
-page. If `.venv` is not on PATH, `uv run plai` is documented in
-CONTRIBUTING only.
+(not `plai`, taken on PyPI, and not `ansible-plaibook`). Product install
+is `pip install plaibook` then `plai review`. From this checkout,
+`uv sync` / `pip install -e .` is the contributor path; `plai review
+...` and `plaibook review ...` are equivalent. Raw
+`ansible-playbook review.yml` stays the AAP / execution-environment /
+power-user path. See [`plaibook/README.md`](../../../plaibook/README.md).
+If `.venv` is not on PATH, `uv run plai` is documented in CONTRIBUTING
+only.
 
 ## How to invoke — `plai` / `plaibook`, don't cd
 
-v1 is an editable install from this checkout. `uv sync --extra dev`
-puts both console scripts on PATH in the project's env. The CLI locates
-`review.yml` from the checkout (package path, `PLAIBOOK_ROOT`, or cwd
-parents) and leaves the caller's cwd alone, so `review --commit` still
-reviews the repo you are in.
+The wheel vendors `review.yml`. `uv sync --extra dev` from this
+checkout puts both console scripts on PATH in the project's env. The
+CLI locates `review.yml` from the install (bundled share, package
+parents, `PLAIBOOK_ROOT`, or cwd parents) and leaves the caller's cwd
+alone, so `plai review` / `review --commit` still reviews the repo you
+are in. First `plai review` installs Galaxy collections into
+`~/.cache/ansible-plaibook/collections` (never `~/.ansible`).
 
 ```bash
+plai review
 plai review org/repo#123
 plaibook review org/repo#123          # identical
 plai review --commit
@@ -73,14 +77,16 @@ bake a provider into the repo. Extra-vars still win.
 
 If a given `agent_family` needs an optional extra from `pyproject.toml`
 (a provider SDK that is not in the default dependency set), install that
-extra in the checkout env (`uv sync --extra <name>`). Extra-vars still
-win. XDG/host_vars do not install extras — they only set Ansible
-variables. `uv run --extra <name> plai review ...` is the CONTRIBUTING
-path when `.venv` is not on PATH.
+extra in the checkout env (`uv sync --extra <name>`). Cursor's SDK is a
+default dependency so `pip install plaibook` then `plai review` works
+without `--extra cursor`. Extra-vars still win. XDG/host_vars do not
+install extras — they only set Ansible variables. `uv run --extra <name>
+plai review ...` is the CONTRIBUTING path when `.venv` is not on PATH.
 
 AAP Job Templates and execution environments keep invoking
 `ansible-playbook review.yml` directly (see the playbook-form examples
-below). Do not wait on Galaxy or pip-collection wheels for v1.
+below). `pip install plaibook` is the product CLI; plaibook-as-a-Galaxy-collection
+FQCN is still later.
 
 (A second playbook, `bug_pipeline.yml` — Jira-driven autonomous bug
 fix — is deliberately parked on the `wip/bug-fix-pipeline` branch, not

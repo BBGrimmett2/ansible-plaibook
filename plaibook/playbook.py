@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Locate the plaibook checkout and shell out to ansible-playbook."""
+"""Locate the playbook tree (checkout or bundled share) and run ansible-playbook."""
 
 from __future__ import annotations
 
@@ -58,11 +58,22 @@ def last_run_canonical_path(home: Path | None = None) -> Path:
     return last_run_dir(home) / "last_run.json"
 
 
-def find_playbook_root(start: Path | None = None, env: dict[str, str] | None = None) -> Path:
-    """Find the checkout that contains review.yml + ansible.cfg.
+def bundled_playbook_root(package_dir: Path | None = None) -> Path:
+    """Playbook tree vendored into the wheel at plaibook/share/."""
+    here = package_dir if package_dir is not None else Path(__file__).resolve().parent
+    return Path(here).resolve() / "share"
 
-    v1 is an editable install from a plaibook checkout. Search order:
-    PLAIBOOK_ROOT, then parents of this package, then parents of *start* (cwd).
+
+def find_playbook_root(
+    start: Path | None = None,
+    env: dict[str, str] | None = None,
+    *,
+    package_dir: Path | None = None,
+) -> Path:
+    """Find the tree that contains review.yml + ansible.cfg.
+
+    Search order: PLAIBOOK_ROOT, parents of this package (editable
+    checkout), parents of *start* (cwd), then the wheel's bundled share.
     """
     environ = os.environ if env is None else env
     explicit = environ.get(ENV_ROOT, "").strip()
@@ -74,8 +85,8 @@ def find_playbook_root(start: Path | None = None, env: dict[str, str] | None = N
             f"{ENV_ROOT}={root} does not contain {PLAYBOOK_NAME} and {ANSIBLE_CFG_NAME}"
         )
 
+    here = (package_dir or Path(__file__).resolve().parent).resolve()
     candidates: list[Path] = []
-    here = Path(__file__).resolve().parent
     candidates.extend(here.parents)
     origin = (start or Path.cwd()).resolve()
     candidates.append(origin)
@@ -89,10 +100,13 @@ def find_playbook_root(start: Path | None = None, env: dict[str, str] | None = N
         if _is_playbook_root(candidate):
             return candidate
 
+    bundled = bundled_playbook_root(here)
+    if _is_playbook_root(bundled):
+        return bundled
+
     raise PlaybookNotFoundError(
-        "Could not find review.yml. v1 of the plaibook CLI needs an editable "
-        "install from a checkout (`pip install -e .` / `uv sync`). Set "
-        f"{ENV_ROOT} to the ansible-plaibook checkout, or run from inside it."
+        "Could not find review.yml. Reinstall plaibook (`pip install plaibook`) "
+        f"or set {ENV_ROOT} to an ansible-plaibook checkout."
     )
 
 
@@ -100,15 +114,15 @@ def _is_playbook_root(path: Path) -> bool:
     return (path / PLAYBOOK_NAME).is_file() and (path / ANSIBLE_CFG_NAME).is_file()
 
 
-def ansible_playbook_bin() -> str:
-    """Prefer ansible-playbook next to this interpreter, even if python is a symlink.
+def ansible_tool_bin(name: str) -> str:
+    """Prefer *name* next to this interpreter, even if python is a symlink.
 
     ``Path.resolve()`` follows ``.venv/bin/python`` into ``/usr/bin``, so the
     sibling lookup would miss ``.venv/bin/ansible-playbook`` and fall through
     to an unrelated PATH binary.
     """
     exe = Path(sys.executable)
-    candidates = [exe.parent / "ansible-playbook", exe.resolve().parent / "ansible-playbook"]
+    candidates = [exe.parent / name, exe.resolve().parent / name]
     seen: set[Path] = set()
     for sibling in candidates:
         if sibling in seen:
@@ -116,13 +130,17 @@ def ansible_playbook_bin() -> str:
         seen.add(sibling)
         if sibling.is_file() and os.access(sibling, os.X_OK):
             return str(sibling)
-    found = shutil.which("ansible-playbook")
+    found = shutil.which(name)
     if found:
         return found
     raise FileNotFoundError(
-        "ansible-playbook not found next to this interpreter or on PATH. "
-        "Install from the plaibook checkout with `uv sync` / `pip install -e .`."
+        f"{name} not found next to this interpreter or on PATH. "
+        "Reinstall plaibook (`pip install plaibook`); ansible-core is a dependency."
     )
+
+
+def ansible_playbook_bin() -> str:
+    return ansible_tool_bin("ansible-playbook")
 
 
 def build_ansible_command(
@@ -175,13 +193,17 @@ def run_ansible_playbook(
     playbook_root: Path,
     verbose: bool,
     env: dict[str, str] | None = None,
+    home: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run ansible-playbook. Quiet mode captures output; -v inherits the TTY."""
+    from plaibook.collections import merge_collections_path
+
     timeout = playbook_timeout_seconds()
     merged = os.environ.copy()
     if env:
         merged.update(env)
     merged["ANSIBLE_CONFIG"] = str(playbook_root / ANSIBLE_CFG_NAME)
+    merge_collections_path(merged, home=home)
     kwargs: dict = {
         "args": command,
         "env": merged,

@@ -56,9 +56,10 @@ lens's own reasoning.
 - **Ambient `ansible-playbook` can still drift.** `pyproject.toml` and
   `uv.lock` pin `ansible-core`/`jinja2`, and CI uses `uv sync --locked`.
   A bare `ansible-playbook` on PATH ignores that pin. Prefer
-  `plai review ...` from the checkout env (the CLI shells out to that
-  env's `ansible-playbook`). If `.venv` is not on PATH, `uv run plai`
-  is the CONTRIBUTING invocation. AAP / EE
+  `plai review ...` (the CLI shells out to that env's `ansible-playbook`).
+  `pip install plaibook` vendors the playbook; first run installs
+  collections into `~/.cache/ansible-plaibook/collections`. If `.venv`
+  is not on PATH, `uv run plai` is the CONTRIBUTING invocation. AAP / EE
   still call `ansible-playbook review.yml` inside the execution
   environment that already pins the interpreter.
 - **`~/.cache/ansible-plaibook/last_run.json` is a single global path** with no

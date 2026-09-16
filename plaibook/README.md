@@ -1,15 +1,61 @@
 # plaibook CLI
 
-This directory is the **CLI** (`plai` / `plaibook`), not the playbooks.
-`review.yml` stays at the [repo root](../README.md). Do not move it here.
+This directory is the **CLI** (`plai` / `plaibook`). `review.yml` stays
+at the [repo root](../README.md) in git; `pip install` copies that tree
+into the wheel at `plaibook/share/`. Do not move the source playbook
+here.
 
 `plai review …` and `plaibook review …` are the same program. The pip/uv
 distribution name is `plaibook` (not `plai`, taken on PyPI, and not
 `ansible-plaibook`).
 
+## Install
+
+```bash
+pip install plaibook
+plai review
+```
+
+That is the product. `plai review` with no arguments reviews `HEAD` in
+the current directory. First run prompts for a provider (Cursor
+defaults to `gpt-5.6-luna` / `high`) and installs Galaxy collections
+into `~/.cache/ansible-plaibook/collections`. It never writes
+`~/.ansible/collections`, so a leftover symlink from a sibling checkout
+cannot break install.
+
+Until this version is on PyPI, the same wheel is `pip install .` from
+this checkout (or `pip install git+https://github.com/aknochow/ansible-plaibook.git`).
+Contributors use `uv sync --extra dev` — see
+[CONTRIBUTING](../CONTRIBUTING.md), not the product.
+
+Needs `git` on PATH (git-sourced collections) and network on first
+collection install. Later runs reuse the cache until
+`collections-requirements.yml` changes.
+
+## Publishing to PyPI
+
+The GitHub Action is [`.github/workflows/publish.yml`](../.github/workflows/publish.yml).
+It uses Trusted Publishing (OIDC), not an API token. Before the first
+release, on your PyPI account:
+
+1. [Pending publisher](https://pypi.org/manage/account/publishing/):
+   project `plaibook`, owner `aknochow`, repo `ansible-plaibook`,
+   workflow `publish.yml`, environment `pypi`.
+2. GitHub repo **Settings → Environments → New environment**: name
+   `pypi`, URL `https://pypi.org/p/plaibook`. Require a reviewer and
+   restrict to tagged releases if you want a human gate.
+3. After this lands on `main`, publish a GitHub Release whose tag
+   matches `pyproject.toml` `version` (first cut: `v0.1.0`).
+
+A pending publisher does **not** reserve the name until that first
+successful upload. Cut the release soon after configuring it.
+`plai` is taken on PyPI (unrelated); the distribution name is
+`plaibook`.
+
 ## Commands
 
 ```bash
+plai review
 plai review org/repo#123
 plai review --commit
 plai review org/repo#123 --json
@@ -25,8 +71,8 @@ spinner. `--full` (or `-v`) adds the findings.md report.
 `-f` / `--force` re-runs lenses even when this commit was already
 reviewed. A same-commit cache hit is labeled in the pretty review so a
 $0.00 cost is not mistaken for a live run.
-`--root` / `PLAIBOOK_ROOT` select the ansible-plaibook checkout that
-contains `review.yml`. First run with no operator config prompts for a
+`--root` / `PLAIBOOK_ROOT` select a playbook tree other than this
+install's bundled copy. First run with no operator config prompts for a
 provider and writes `~/.config/ansible-plaibook/vars.yml`. `--provider
 cursor` does the same non-interactively and defaults Cursor to
 `gpt-5.6-luna` / `high`. PR/branch reviews skip nested OpenShell when
@@ -47,11 +93,11 @@ stage (setup, checkout, scan, lenses, merge, explore, verify, persist).
 summary fields (what agents parse). The CLI does not rescore. It does
 not dump the full report markdown unless `--full` or `-v`.
 
-## v1 checkout vs later FQCN
+## Wheel vs later FQCN
 
-v1 still locates `review.yml` in an ansible-plaibook checkout and
-shells out to `ansible-playbook review.yml`. It does not vendor the
-playbook tree into the wheel.
+This CLI still shells out to `ansible-playbook review.yml` (bundled in
+the wheel, or a checkout). It does not yet run
+`ansible-playbook aknochow.plaibook.review`.
 
 **Later** (not this PR; this directory becomes its own repo):
 
@@ -59,15 +105,6 @@ playbook tree into the wheel.
 
 That FQCN does not work yet. Do not pretend it does. AAP /
 execution-environment jobs keep calling `ansible-playbook review.yml`.
-
-## Install story
-
-Honest `pip install plaibook` waits on plaibook-as-a-collection **and**
-the provider wheels. The provider wheels are on `main` now;
-plaibook-as-collection is not. Until then, install from an
-ansible-plaibook checkout (`uv sync` / `pip install -e .`). If that
-checkout's `.venv` is not on PATH, `uv run plai` is the contributor
-invocation — see [CONTRIBUTING](../CONTRIBUTING.md), not the product.
 
 ## Docs
 

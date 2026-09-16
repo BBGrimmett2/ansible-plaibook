@@ -1,0 +1,143 @@
+# -*- coding: utf-8 -*-
+"""Install Galaxy collections into a plaibook-owned cache, never ~/.ansible."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import subprocess
+from pathlib import Path
+from typing import TextIO
+
+from plaibook.playbook import (
+    CACHE_DIRNAME,
+    ansible_tool_bin,
+    last_run_dir,
+)
+
+REQUIREMENTS_NAME = "collections-requirements.yml"
+COLLECTIONS_DIRNAME = "collections"
+STAMP_NAME = ".requirements.sha256"
+ENV_COLLECTIONS = "ANSIBLE_COLLECTIONS_PATH"
+ENV_COLLECTIONS_PLURAL = "ANSIBLE_COLLECTIONS_PATHS"
+GALAXY_TIMEOUT_SECONDS = 600
+
+
+class CollectionInstallError(RuntimeError):
+    """ansible-galaxy could not install collections-requirements.yml."""
+
+
+def ansible_galaxy_bin() -> str:
+    return ansible_tool_bin("ansible-galaxy")
+
+
+def collections_dir(home: Path | None = None) -> Path:
+    return last_run_dir(home) / COLLECTIONS_DIRNAME
+
+
+def merge_collections_path(env: dict[str, str], *, home: Path | None = None) -> None:
+    """Put the isolated cache first so a leftover ~/.ansible tree never wins."""
+    isolated = str(collections_dir(home))
+    raw = env.get(ENV_COLLECTIONS_PLURAL) or env.get(ENV_COLLECTIONS) or ""
+    parts = [p for p in raw.split(os.pathsep) if p and p != isolated]
+    merged = os.pathsep.join([isolated, *parts])
+    env[ENV_COLLECTIONS] = merged
+    env[ENV_COLLECTIONS_PLURAL] = merged
+
+
+def ensure_collections(
+    playbook_root: Path,
+    *,
+    home: Path | None = None,
+    env: dict[str, str] | None = None,
+    stderr: TextIO | None = None,
+    galaxy_bin: str | None = None,
+) -> Path | None:
+    """Install or refresh collections into ~/.cache/ansible-plaibook/collections.
+
+    No-op when the playbook tree has no requirements file (tests, bare
+    --root fixtures). Never writes to ~/.ansible/collections — that path
+    is where a sibling-checkout symlink made `ansible-galaxy` crash with
+    ``OSError: Cannot call rmtree on a symbolic link``.
+    """
+    requirements = Path(playbook_root) / REQUIREMENTS_NAME
+    if not requirements.is_file():
+        return None
+
+    dest = collections_dir(home)
+    if dest.exists() and dest.is_symlink():
+        raise CollectionInstallError(
+            f"{dest} is a symlink; plaibook will not install collections "
+            f"through it. Remove the symlink so {CACHE_DIRNAME} can own this cache."
+        )
+    dest.mkdir(parents=True, exist_ok=True)
+
+    digest = hashlib.sha256(requirements.read_bytes()).hexdigest()
+    stamp = dest / STAMP_NAME
+    if stamp.is_file() and stamp.read_text(encoding="utf-8").strip() == digest:
+        return dest
+
+    if stderr is not None:
+        if stamp.is_file():
+            stderr.write("Updating Ansible collections (pin change)…\n")
+        else:
+            stderr.write(
+                "Installing Ansible collections (first run, into "
+                f"~/.cache/{CACHE_DIRNAME}/collections)…\n"
+            )
+        stderr.flush()
+
+    command = [
+        galaxy_bin or ansible_galaxy_bin(),
+        "collection",
+        "install",
+        "-r",
+        str(requirements),
+        "-p",
+        str(dest),
+        "--force",
+    ]
+    merged = os.environ.copy()
+    if env:
+        merged.update(env)
+    _quiet_git_env(merged)
+    merged.setdefault("GIT_TERMINAL_PROMPT", "0")
+    merged.setdefault("ANSIBLE_FORCE_COLOR", "0")
+    try:
+        completed = subprocess.run(
+            command,
+            env=merged,
+            capture_output=True,
+            text=True,
+            timeout=GALAXY_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise CollectionInstallError(
+            "ansible-galaxy not found next to this interpreter or on PATH. "
+            "Reinstall plaibook (`pip install plaibook`); ansible-core is a dependency."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CollectionInstallError(
+            f"ansible-galaxy timed out after {GALAXY_TIMEOUT_SECONDS}s installing "
+            f"collections into {dest}."
+        ) from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise CollectionInstallError(
+            f"ansible-galaxy failed installing collections into {dest}"
+            + (f":\n{detail}" if detail else ".")
+        )
+    stamp.write_text(digest + "\n", encoding="utf-8")
+    return dest
+
+
+def _quiet_git_env(env: dict[str, str]) -> None:
+    """Git collections check out a SHA; silence advice.detachedHead on first run."""
+    try:
+        count = int(env.get("GIT_CONFIG_COUNT") or 0)
+    except ValueError:
+        count = 0
+    env["GIT_CONFIG_COUNT"] = str(count + 1)
+    env[f"GIT_CONFIG_KEY_{count}"] = "advice.detachedHead"
+    env[f"GIT_CONFIG_VALUE_{count}"] = "false"

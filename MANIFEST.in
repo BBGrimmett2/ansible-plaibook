@@ -1,0 +1,9 @@
+include LICENSE
+include review.yml
+include ansible.cfg
+include collections-requirements.yml
+graft roles
+graft action_plugins
+graft library
+graft filter_plugins
+graft callback_plugins

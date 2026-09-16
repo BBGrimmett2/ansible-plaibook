@@ -12,14 +12,18 @@ every time, invocable from a terminal, a git hook, or an AAP job
 template. Expect more playbooks here over time as other harness skills
 get the same treatment.
 
-Locally, `uv sync` / `pip install -e .` from this checkout installs the
-**`plaibook`** package (not `plai`, taken on PyPI, and not
-`ansible-plaibook`) and two console scripts that share one entry point:
-`plaibook` and `plai`. See [`plaibook/README.md`](plaibook/README.md)
-for the CLI product page. `plai review org/repo#123` is the default UX;
-`ansible-playbook review.yml` remains the AAP path. v1 does not publish
-to PyPI. Honest `pip install plaibook` waits on plaibook-as-a-collection
-(not done) plus provider wheels (already on `main`).
+Locally, **`pip install plaibook`** then **`plai review`**. The package
+name is `plaibook` (not `plai`, taken on PyPI, and not
+`ansible-plaibook`). `plaibook` and `plai` share one entry point. The
+wheel vendors `review.yml`; first `plai review` installs Galaxy
+collections into `~/.cache/ansible-plaibook/collections` (never
+`~/.ansible`). No checkout, no `ansible-galaxy` against your home
+tree. See [`plaibook/README.md`](plaibook/README.md). `plai review`
+with no arguments reviews `HEAD` in the current directory;
+`plai review org/repo#123` is the PR/MR form. `ansible-playbook
+review.yml` remains the AAP path. Until this version is on PyPI, the
+same wheel is `pip install .` from this checkout. Contributors still
+`uv sync --extra dev` — see [CONTRIBUTING](CONTRIBUTING.md).
 
 ## Why Ansible?
 
