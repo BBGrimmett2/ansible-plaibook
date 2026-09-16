@@ -17,11 +17,6 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
-    env:
-      # Outside the checkout so ansible-lint does not walk installed trees.
-      PLAIBOOK_COLLECTIONS_DEST: ${{ runner.temp }}/plaibook-collections
-      ANSIBLE_COLLECTIONS_PATH: ${{ runner.temp }}/plaibook-collections
-      ANSIBLE_COLLECTIONS_PATHS: ${{ runner.temp }}/plaibook-collections
 
     steps:
       - name: Check out repository
@@ -51,8 +46,12 @@ jobs:
         env:
           GIT_TERMINAL_PROMPT: "0"
           GITHUB_TOKEN: ${{ github.token }}
+          PLAIBOOK_COLLECTIONS_DEST: ${{ runner.temp }}/plaibook-collections
         run: |
-          mkdir -p "${PLAIBOOK_COLLECTIONS_DEST}"
+          dest="${PLAIBOOK_COLLECTIONS_DEST}"
+          mkdir -p "$dest"
+          echo "ANSIBLE_COLLECTIONS_PATH=${dest}" >> "$GITHUB_ENV"
+          echo "ANSIBLE_COLLECTIONS_PATHS=${dest}" >> "$GITHUB_ENV"
           uv run --python "${{ matrix.python-version }}" python scripts/ci-install-collections.py
 
       - name: Run ansible-lint check
