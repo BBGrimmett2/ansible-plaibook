@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Sequence
 
 from plaibook import __version__
+from plaibook.collections import CollectionInstallError, ensure_collections
 from plaibook.config import (
     FAMILIES,
     ConfigError,
@@ -41,11 +42,13 @@ USAGE_EPILOG = """\
 plai and plaibook are the same program. The pip/uv distribution name is plaibook
 (not plai, which is taken on PyPI, and not ansible-plaibook).
 
-v1 locates review.yml in an ansible-plaibook checkout (--root / PLAIBOOK_ROOT /
-package parents / cwd). It shells out to ansible-playbook and reads
-last_run.<run_id>.json. It does not rescore findings or scrape playbook stdout.
-It does not yet run ansible-playbook aknochow.plaibook.review (that FQCN lands
-when plaibook is a collection).
+pip install plaibook vendors review.yml into the wheel. plai review with no
+arguments reviews HEAD in the current directory. First run installs Galaxy
+collections into ~/.cache/ansible-plaibook/collections (never ~/.ansible).
+Override the playbook tree with --root / PLAIBOOK_ROOT. The CLI shells out
+to ansible-playbook and reads last_run.<run_id>.json. It does not rescore
+findings or scrape playbook stdout. It does not yet run ansible-playbook
+aknochow.plaibook.review (that FQCN lands when plaibook is a collection).
 
 Default stdout is a readable review (target, verdict, 0-100 scores,
 Critical/Major with file:line + why). Quiet TTY waits show a spinner on
@@ -69,6 +72,8 @@ importable from this interpreter (--no-sandbox to review on the host,
 AAP / execution-environment jobs keep calling ansible-playbook review.yml.
 
 Examples:
+  pip install plaibook
+  plai review
   plai review org/repo#123
   plaibook review org/repo#123
   plai review --commit
@@ -121,7 +126,10 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     mode.add_argument(
         "--commit",
         action="store_true",
-        help="review_type=commit (fast local single-commit check).",
+        help=(
+            "review_type=commit. Default when no PR/MR target is given "
+            "(reviews HEAD in the current directory)."
+        ),
     )
     mode.add_argument(
         "--branch",
@@ -232,7 +240,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     review.add_argument(
         "--root",
         dest="playbook_root",
-        help="Plaibook checkout containing review.yml (or set PLAIBOOK_ROOT).",
+        help="Playbook tree containing review.yml (default: this install, or PLAIBOOK_ROOT).",
     )
     return parser
 
@@ -312,8 +320,9 @@ def _validate_review_args(args: argparse.Namespace) -> str | None:
         if args.target:
             return "review --branch does not take a positional PR/MR target"
         return None
-    if not args.target:
-        return "specify a PR/MR target, or --commit, or --branch TARGET"
+    if args.target:
+        return None
+    args.commit = True
     return None
 
 
@@ -390,6 +399,12 @@ def cmd_review(args: argparse.Namespace) -> int:
             )
             return 2
     except PlaybookNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    try:
+        ensure_collections(root, stderr=sys.stderr)
+    except CollectionInstallError as exc:
         print(str(exc), file=sys.stderr)
         return 2
 

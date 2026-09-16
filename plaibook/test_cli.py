@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import yaml
 
 from plaibook.cli import (
+    _validate_review_args,
     ansible_verbosity,
     build_parser,
     cmd_review,
@@ -56,6 +57,7 @@ def test_parser_plai_help_identifies_plaibook():
     help_text = parser.format_help()
     assert "plaibook CLI" in help_text
     assert "plai" in help_text
+    assert "pip install plaibook" in help_text
     assert "plai review org/repo#123" in help_text
     assert "plai review --commit" in help_text
     assert "plai review org/repo#123 --json" in help_text
@@ -97,6 +99,11 @@ def test_plaibook_and_plai_share_the_same_main():
     parser_b = cli.build_parser(prog="plaibook")
     assert parser_a.parse_args(["review", "--commit"]).commit is True
     assert parser_b.parse_args(["review", "--commit"]).commit is True
+    bare = parser_a.parse_args(["review"])
+    assert bare.target is None
+    assert bare.commit is False
+    assert _validate_review_args(bare) is None
+    assert bare.commit is True
 
 
 def test_extra_vars_commit_and_pr_and_notes():
@@ -181,6 +188,23 @@ def test_cmd_review_skips_resolve_family_when_agent_family_extra(tmp_path, monke
     code = cmd_review(_args(commit=True, playbook_root=str(checkout), provider="cursor"))
     assert code == 0
     assert called and called[0]["cli_family"] == "cursor"
+
+
+def test_cmd_review_reports_collection_install_error(tmp_path, monkeypatch, capsys):
+    from plaibook.collections import CollectionInstallError
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "review.yml").write_text("---\n")
+    (checkout / "ansible.cfg").write_text("[defaults]\n")
+
+    def boom(*_args, **_kwargs):
+        raise CollectionInstallError("galaxy failed")
+
+    monkeypatch.setattr("plaibook.cli.ensure_collections", boom)
+    code = cmd_review(_args(commit=True, playbook_root=str(checkout)))
+    assert code == 2
+    assert "galaxy failed" in capsys.readouterr().err
 
 
 def test_extra_vars_force_disables_same_commit_fast_path():
@@ -392,6 +416,70 @@ def test_find_playbook_root_prefers_env(tmp_path, monkeypatch):
     monkeypatch.chdir(other)
     found = find_playbook_root(start=other, env={"PLAIBOOK_ROOT": str(checkout)})
     assert found == checkout.resolve()
+
+
+def test_find_playbook_root_falls_back_to_bundled_share(tmp_path, monkeypatch):
+    from plaibook.playbook import PlaybookNotFoundError
+
+    pkg = tmp_path / "site-packages" / "plaibook"
+    share = pkg / "share"
+    share.mkdir(parents=True)
+    (share / "review.yml").write_text("--- bundled\n")
+    (share / "ansible.cfg").write_text("[defaults]\n")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    found = find_playbook_root(start=elsewhere, env={}, package_dir=pkg)
+    assert found == share.resolve()
+
+    empty_pkg = tmp_path / "site-packages" / "empty-plaibook"
+    empty_pkg.mkdir()
+    try:
+        find_playbook_root(start=elsewhere, env={}, package_dir=empty_pkg)
+    except PlaybookNotFoundError as exc:
+        assert "pip install plaibook" in str(exc)
+    else:
+        raise AssertionError("expected PlaybookNotFoundError")
+
+
+def test_find_playbook_root_prefers_checkout_over_share(tmp_path):
+    checkout = tmp_path / "ansible-plaibook"
+    checkout.mkdir()
+    (checkout / "review.yml").write_text("--- checkout\n")
+    (checkout / "ansible.cfg").write_text("[defaults]\n")
+    pkg = checkout / "plaibook"
+    share = pkg / "share"
+    share.mkdir(parents=True)
+    (share / "review.yml").write_text("--- share\n")
+    (share / "ansible.cfg").write_text("[defaults]\n")
+    found = find_playbook_root(start=tmp_path / "elsewhere", env={}, package_dir=pkg)
+    assert found == checkout.resolve()
+
+
+def test_find_playbook_root_ignores_cwd_poison_tree(tmp_path, monkeypatch):
+    pkg = tmp_path / "site-packages" / "plaibook"
+    share = pkg / "share"
+    share.mkdir(parents=True)
+    (share / "review.yml").write_text("--- bundled\n")
+    (share / "ansible.cfg").write_text("[defaults]\n")
+    poison = tmp_path / "evil-repo"
+    poison.mkdir()
+    (poison / "review.yml").write_text("--- pwn\n")
+    (poison / "ansible.cfg").write_text("[defaults]\n")
+    monkeypatch.chdir(poison)
+    found = find_playbook_root(start=poison, env={}, package_dir=pkg)
+    assert found == share.resolve()
+
+
+def test_review_without_target_defaults_to_commit():
+    parser = build_parser(prog="plai")
+    args = parser.parse_args(["review"])
+    assert args.target is None
+    assert args.commit is False
+    assert _validate_review_args(args) is None
+    assert args.commit is True
+    extras = extra_vars_from_args(args, "runId0123456789")
+    assert extras["review_type"] == "commit"
 
 
 def test_generate_run_id_shape():

@@ -9,14 +9,20 @@ status: stable
 # Getting Started
 
 The short command is **`plai`**. The package and full command are
-**`plaibook`**. They share one entry point. After `uv sync` /
-`pip install -e .` from this checkout, `plai review ...` and
-`plaibook review ...` are the same program. v1 does not upload to
-PyPI; install from the checkout. See [`plaibook/README.md`](../plaibook/README.md)
-for the CLI product page. Honest `pip install plaibook` waits on
-plaibook-as-a-collection (not done) plus provider wheels (on `main`
-now). AAP / execution-environment jobs keep
-calling `ansible-playbook review.yml` directly.
+**`plaibook`**. They share one entry point.
+
+```bash
+pip install plaibook
+plai review
+```
+
+`plai review` with no arguments reviews `HEAD` in the current
+directory. The wheel vendors `review.yml`. First run installs Galaxy
+collections into `~/.cache/ansible-plaibook/collections` (never
+`~/.ansible`). See [`plaibook/README.md`](../plaibook/README.md).
+Until this version is on PyPI, `pip install .` from this checkout is
+the same wheel. AAP / execution-environment jobs keep calling
+`ansible-playbook review.yml` directly.
 
 ## Review a GitHub PR or GitLab MR
 
@@ -27,10 +33,10 @@ plai review https://github.com/org/repo/pull/12
 plai review org/repo!34
 ```
 
-These assume the plaibook env is installed (`uv sync` from the
-checkout). The CLI locates `review.yml` itself and leaves the caller's
-cwd alone, so you can review another repo without `cd`. Override the
-checkout with `--root` / `PLAIBOOK_ROOT` if needed.
+These assume `plaibook` is installed (`pip install plaibook`, or
+`pip install .` from this checkout). The CLI locates `review.yml` from
+the wheel (or a checkout / `--root` / `PLAIBOOK_ROOT`) and leaves the
+caller's cwd alone, so you can review another repo without `cd`.
 
 The first `plai review` with no operator config asks which provider to
 use and writes `~/.config/ansible-plaibook/vars.yml`. Cursor defaults
@@ -56,18 +62,20 @@ ansible-playbook review.yml -e '{"review_targets": ["org/repo#1", "org/repo#2"]}
 ## Review a single local commit: fast and cheap
 
 ```bash
+plai review
 plai review --commit
 plaibook review --commit
 plai review --commit --sha abc1234 --repo /path/to/repo
 ```
 
-Both arguments are optional (`--sha` defaults to `HEAD`, `--repo` to
-the current directory). This mode skips the sandbox and the
-exploration pass. It only sees the diff itself, not the surrounding
-codebase, so it's fast and inexpensive, at the cost of missing anything
-that requires reading a file outside the diff. A `NEEDS_CHANGES`
-verdict with a real Critical/Major finding exits non-zero, on both
-`plai` and `plaibook`.
+`plai review` with no PR/MR target is `--commit`. Both `--sha` and
+`--repo` are optional (`--sha` defaults to `HEAD`, `--repo` to the
+current directory). This mode skips the sandbox and the exploration
+pass. It only sees the diff itself, not the surrounding codebase, so
+it's fast and inexpensive, at the cost of missing anything that
+requires reading a file outside the diff. A `NEEDS_CHANGES` verdict
+with a real Critical/Major finding exits non-zero, on both `plai` and
+`plaibook`.
 
 ## CLI output
 

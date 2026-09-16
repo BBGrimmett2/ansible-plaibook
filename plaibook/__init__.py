@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""plaibook CLI package. v1 wraps a checkout of review.yml; not a Galaxy collection."""
+"""plaibook CLI package. Wraps a bundled (or checkout) review.yml; not a Galaxy collection."""
 
 from __future__ import annotations
 

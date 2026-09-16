@@ -670,6 +670,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "ansible-core" },
+    { name = "cursor-sdk" },
     { name = "jinja2" },
     { name = "pyyaml" },
 ]
@@ -689,6 +690,7 @@ dev = [
 requires-dist = [
     { name = "ansible-core", specifier = ">=2.16.0,<2.20.0" },
     { name = "ansible-lint", marker = "extra == 'dev'", specifier = ">=24.0.0" },
+    { name = "cursor-sdk", specifier = ">=1.0.31,<2.0.0" },
     { name = "cursor-sdk", marker = "extra == 'cursor'", specifier = ">=1.0.31,<2.0.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0,<10.0.0" },

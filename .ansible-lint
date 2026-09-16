@@ -32,3 +32,6 @@ exclude_paths:
   # Local worktree checkouts (gitignored, never committed) that
   # ansible-lint would otherwise walk and lint anyway.
   - .claude/worktrees/
+  # CI / local `ansible-galaxy -p` dest inside the checkout. Lint the
+  # playbook, not the installed collection trees.
+  - .galaxy-collections/
