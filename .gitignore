@@ -11,6 +11,9 @@ __pycache__/
 # copied into the wheel so `pip install plaibook` does not need a checkout.
 plaibook/share/
 
+# CI / local galaxy -p dest (never ~/.ansible).
+.galaxy-collections/
+
 # `uv build` / `python -m build` output. Keep build/requirements.yml tracked.
 dist/
 
