@@ -46,9 +46,11 @@ release, on your PyPI account:
    a `v*` tag rule are the human publish gate (YAML cannot require
    them). Restrict deployments to those tags.
 3. After this lands on `main`, publish a GitHub Release whose tag
-   matches `pyproject.toml` `version` (first cut: `v0.1.0`).
+   matches `pyproject.toml` `version` (first cut: `v0.1.0`) and whose
+   commit is already on the default branch.
    `publish.yml` has no `workflow_dispatch`; only a non-prerelease
-   published release whose tag is `v` plus that version can upload.
+   published release whose tag is `v` plus that version, pointing at a
+   commit on the default branch, can upload.
 
 A pending publisher does **not** reserve the name until that first
 successful upload. Cut the release soon after configuring it.

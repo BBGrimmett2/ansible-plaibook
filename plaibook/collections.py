@@ -193,6 +193,7 @@ def ensure_collections(
         merged = os.environ.copy()
         if env:
             merged.update(env)
+        merge_collections_path(merged, home=home)
         _quiet_git_env(merged)
         merged.setdefault("GIT_TERMINAL_PROMPT", "0")
         merged.setdefault("ANSIBLE_FORCE_COLOR", "0")

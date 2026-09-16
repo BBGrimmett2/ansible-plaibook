@@ -59,11 +59,38 @@ def test_ensure_collections_installs_into_isolated_cache(tmp_path, monkeypatch):
     assert kwargs["capture_output"] is True
     stamp = dest / ".requirements.sha256"
     assert stamp.is_file()
+    assert "ANSIBLE_COLLECTIONS_PATHS" not in env
 
     calls.clear()
     again = ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
     assert again == dest
     assert calls == []
+
+
+def test_ensure_collections_drops_legacy_paths_from_galaxy_env(tmp_path, monkeypatch):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text("collections: []\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    recorded = []
+
+    def fake_run(cmd, **kwargs):
+        recorded.append(kwargs["env"])
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    monkeypatch.setenv("ANSIBLE_COLLECTIONS_PATHS", "/opt/legacy")
+    ensure_collections(
+        playbook,
+        home=home,
+        galaxy_bin="ansible-galaxy",
+        env={"ANSIBLE_COLLECTIONS_PATHS": "/from-caller"},
+    )
+    assert recorded
+    galaxy_env = recorded[0]
+    assert "ANSIBLE_COLLECTIONS_PATHS" not in galaxy_env
+    assert galaxy_env["ANSIBLE_COLLECTIONS_PATH"].split(os.pathsep)[0] == str(collections_dir(home))
 
 
 def test_ensure_collections_reinstalls_when_requirements_change(tmp_path, monkeypatch):
