@@ -29,9 +29,9 @@
           - review_hostname == ""
         fail_msg: "GitHub URL form: got platform={{ review_platform }} org_repo={{ review_org_repo }} number={{ review_number }} hostname='{{ review_hostname }}'"
 
-    - name: "Scenario: GitHub bare form (org/repo#N)"
+    - name: "Scenario: GitHub bare form (org/repo/N)"
       vars:
-        review_target: "aknochow/ansible-plaibook#29"
+        review_target: "aknochow/ansible-plaibook/29"
       ansible.builtin.include_tasks: "{{ parse_pr_target_path }}"
 
     - name: Assert GitHub bare form fields parsed correctly
@@ -42,6 +42,39 @@
           - review_number == "29"
           - review_hostname == ""
         fail_msg: "GitHub bare form: got platform={{ review_platform }} org_repo={{ review_org_repo }} number={{ review_number }} hostname='{{ review_hostname }}'"
+
+    - name: "Scenario: legacy GitHub org/repo#N is rejected"
+      block:
+        - name: Parse legacy hash form (expected to fail)
+          ansible.builtin.include_tasks: "{{ parse_pr_target_path }}"
+          vars:
+            review_target: "aknochow/ansible-plaibook#29"
+        - name: Fail the test if legacy hash was accepted
+          ansible.builtin.fail:
+            msg: "TEST BUG: parse_pr_target.yml accepted org/repo#N"
+      rescue:
+        - name: Assert the rejection names the slash form
+          ansible.builtin.assert:
+            that:
+              - "'org/repo/N' in ansible_failed_result.msg"
+              - "'shell-special' in ansible_failed_result.msg or 'special to bash' in ansible_failed_result.msg"
+              - "'TEST BUG' not in ansible_failed_result.msg"
+
+    - name: "Scenario: legacy GitLab org/repo!N is rejected"
+      block:
+        - name: Parse legacy bang form (expected to fail)
+          ansible.builtin.include_tasks: "{{ parse_pr_target_path }}"
+          vars:
+            review_target: "aknochow/ansible-plaibook!29"
+        - name: Fail the test if legacy bang was accepted
+          ansible.builtin.fail:
+            msg: "TEST BUG: parse_pr_target.yml accepted org/repo!N"
+      rescue:
+        - name: Assert the rejection names the gitlab prefix form
+          ansible.builtin.assert:
+            that:
+              - "'gitlab:org/repo/N' in ansible_failed_result.msg"
+              - "'TEST BUG' not in ansible_failed_result.msg"
 
     - name: "Scenario: GitLab MR URL (self-hosted, existing coverage)"
       vars:
@@ -57,9 +90,9 @@
           - review_hostname == "gitlab.example.com"
         fail_msg: "GitLab URL form: got platform={{ review_platform }} org_repo={{ review_org_repo }} number={{ review_number }} hostname='{{ review_hostname }}'"
 
-    - name: "Scenario: GitLab bare form, no host prefix (existing behavior -- still no hostname, still falls back to gitlab.com downstream)"
+    - name: "Scenario: GitLab bare form, no host prefix (gitlab:org/repo/N)"
       vars:
-        review_target: "aknochow/ansible-plaibook!29"
+        review_target: "gitlab:aknochow/ansible-plaibook/29"
       ansible.builtin.include_tasks: "{{ parse_pr_target_path }}"
 
     - name: Assert GitLab bare form (no host prefix) fields parsed correctly
@@ -71,9 +104,9 @@
           - review_hostname == ""
         fail_msg: "GitLab bare form (no host): got platform={{ review_platform }} org_repo={{ review_org_repo }} number={{ review_number }} hostname='{{ review_hostname }}'"
 
-    - name: "Scenario: GitLab bare form WITH self-hosted host prefix -- the actual fix"
+    - name: "Scenario: GitLab bare form WITH self-hosted host prefix"
       vars:
-        review_target: "gitlab.example.com:aknochow/ansible-plaibook!29"
+        review_target: "gitlab:gitlab.example.com:aknochow/ansible-plaibook/29"
       ansible.builtin.include_tasks: "{{ parse_pr_target_path }}"
 
     - name: Assert GitLab bare form with host prefix resolves the hostname
@@ -93,7 +126,7 @@
 
     - name: "Scenario: GitLab bare form with host prefix, org/repo containing a subgroup-free slash only (sanity: host-prefix parsing doesn't eat the org/repo separator)"
       vars:
-        review_target: "gitlab.example.com:some-org/some-repo!7"
+        review_target: "gitlab:gitlab.example.com:some-org/some-repo/7"
       ansible.builtin.include_tasks: "{{ parse_pr_target_path }}"
 
     - name: Assert the org/repo separator survives host-prefix parsing
@@ -109,7 +142,7 @@
         - name: Parse the unsafe-charset-hostname target (expected to fail)
           ansible.builtin.include_tasks: "{{ parse_pr_target_path }}"
           vars:
-            review_target: "evil.com;whoami:aknochow/ansible-plaibook!29"
+            review_target: "gitlab:evil.com;whoami:aknochow/ansible-plaibook/29"
 
         - name: Fail the test if the unsafe hostname was NOT rejected
           ansible.builtin.fail:
@@ -148,7 +181,7 @@
         - name: Assert the failure message mentions the host-prefix syntax
           ansible.builtin.assert:
             that:
-              - "'host:org/repo!N' in ansible_failed_result.msg"
+              - "'gitlab:host:org/repo/N' in ansible_failed_result.msg"
             fail_msg: >-
               Failure fired (correct), but its message doesn't mention the
               new host-prefix syntax: {{ ansible_failed_result.msg | default('unknown') }}
@@ -181,9 +214,9 @@
           - review_hostname == "gitea.example.com"
         fail_msg: "Gitea URL (pull) form: got platform={{ review_platform }} org_repo={{ review_org_repo }} number={{ review_number }} hostname='{{ review_hostname }}'"
 
-    - name: "Scenario: Gitea shorthand with host prefix (gitea:host:org/repo#N)"
+    - name: "Scenario: Gitea shorthand with host prefix (gitea:host:org/repo/N)"
       vars:
-        review_target: "gitea:gitea.example.com:aknochow/ansible-plaibook#12"
+        review_target: "gitea:gitea.example.com:aknochow/ansible-plaibook/12"
       ansible.builtin.include_tasks: "{{ parse_pr_target_path }}"
 
     - name: Assert Gitea shorthand with host prefix parsed correctly
@@ -195,9 +228,9 @@
           - review_hostname == "gitea.example.com"
         fail_msg: "Gitea shorthand with host: got platform={{ review_platform }} org_repo={{ review_org_repo }} number={{ review_number }} hostname='{{ review_hostname }}'"
 
-    - name: "Scenario: Gitea shorthand without host (gitea:org/repo#N)"
+    - name: "Scenario: Gitea shorthand without host (gitea:org/repo/N)"
       vars:
-        review_target: "gitea:aknochow/ansible-plaibook#12"
+        review_target: "gitea:aknochow/ansible-plaibook/12"
       ansible.builtin.include_tasks: "{{ parse_pr_target_path }}"
 
     - name: Assert Gitea shorthand without host falls back to default hostname

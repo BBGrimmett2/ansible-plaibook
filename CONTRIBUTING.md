@@ -18,7 +18,7 @@ If the project's `.venv` is not on PATH, invoke the CLI as
 `uv run plai review …` from this checkout. That is the contributor
 path, not the product. The product is `pip install plaibook` then
 `plai review`. After the env is on PATH, the commands are
-`plai review` (HEAD of cwd), `plai review org/repo#123`, and
+`plai review` (HEAD of cwd), `plai review org/repo/123`, and
 `plai review --commit`.
 
 ### Running Tests:

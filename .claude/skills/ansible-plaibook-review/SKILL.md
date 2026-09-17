@@ -36,15 +36,15 @@ installs Galaxy collections into `~/.cache/ansible-plaibook/collections`
 
 ```bash
 plai review
-plai review org/repo#123
-plaibook review org/repo#123          # identical
+plai review org/repo/123
+plaibook review org/repo/123          # identical
 plai review --commit
 plai review --commit --repo /path/to/repo --sha abc1234
-plai review org/repo#123 --json       # structured last_run + summary on stdout
-plai review org/repo#123 --yaml
-plai review org/repo#123 -v           # ansible-playbook -v (task names)
-plai review org/repo#123 --debug      # ansible-playbook -vv (task names + args)
-plai review org/repo#123 --full       # pretty review plus findings.md
+plai review org/repo/123 --json       # structured last_run + summary on stdout
+plai review org/repo/123 --yaml
+plai review org/repo/123 -v           # ansible-playbook -v (task names)
+plai review org/repo/123 --debug      # ansible-playbook -vv (task names + args)
+plai review org/repo/123 --full       # pretty review plus findings.md
 ```
 
 Default stdout is a readable review: target, verdict, 0–100 scores,
@@ -100,26 +100,24 @@ handoff.ansible-plaibook-bug-fix-pipeline-deferred.yaml.)
 ### `review_type: pr` (default) — review a GitHub PR or GitLab MR
 
 ```bash
-plai review org/repo#123
+plai review org/repo/123
 plai review https://github.com/org/repo/pull/12
-plai review org/repo!34
+plai review gitlab:org/repo/34
 # AAP / EE / power-user path (same playbook):
-ansible-playbook review.yml -e review_targets_raw="org/repo#123"
+ansible-playbook review.yml -e review_targets_raw=org/repo/123
 ```
 
 - `review_targets_raw` accepts a GitHub PR URL, a GitLab MR URL, or a
-  bare `org/repo#N` (GitHub) / `org/repo!N` (GitLab) identifier. For a
-  self-hosted GitLab instance (e.g. `gitlab.example.com`), prefix
-  the bare GitLab form with the host: `host:org/repo!N`, e.g.
-  `gitlab.example.com:aknochow/ansible-plaibook!29` — the same terse
-  `host:path` syntax `git`/`scp` already use. Without a host prefix,
-  the bare GitLab form still resolves to `gitlab.com`. The full URL
-  form works too and needs no prefix. **Both bare GitLab forms (with
-  or without a host prefix) only support a single-level `org/repo`,
-  not a GitLab subgroup** (e.g. `group/subgroup/project!N`) — use the
-  full URL form for a subgrouped project, which does support it.
+  bare `org/repo/N` (GitHub) / `gitlab:org/repo/N` (GitLab) identifier.
+  For a self-hosted GitLab instance (e.g. `gitlab.example.com`), use
+  `gitlab:host:org/repo/N`, e.g.
+  `gitlab:gitlab.example.com:aknochow/ansible-plaibook/29`. Without a
+  host, `gitlab:org/repo/N` still resolves to `gitlab.com`. The full URL
+  form works too. **Bare GitLab forms only support a single-level
+  `org/repo`, not a subgroup** (e.g. `group/subgroup/project`) — use the
+  full URL form for a subgrouped project.
 - For **multiple targets** in one run, use the playbook JSON-list form:
-  `ansible-playbook review.yml -e '{"review_targets": ["org/repo#1", "org/repo#2"]}'`
+  `ansible-playbook review.yml -e '{"review_targets": ["org/repo/1", "org/repo/2"]}'`
 - Runs in an OpenShell sandbox by default (`use_sandbox: true` —
   `library/run_checklist.py` executes commands parsed out of a
   source-branch-controlled `CHECKLIST.md`, i.e. untrusted input).
@@ -132,7 +130,7 @@ ansible-playbook review.yml -e review_targets_raw="org/repo#123"
   `-e use_sandbox=false`.
 - `post_results` defaults to `false` — reviewing is safe to automate;
   posting the review back to the real PR/MR is a write to shared state
-  and needs explicit opt-in (`plai review org/repo#123 --post`, or
+  and needs explicit opt-in (`plai review org/repo/123 --post`, or
   `-e post_results=true`).
 - Use `plai review ... --notes "..."` (JSON extra-vars, colons are
   safe) or the playbook JSON form `-e '{"review_extra_notes": "..."}'`
@@ -181,7 +179,7 @@ audit.
 
 | Situation | Command |
 |---|---|
-| Someone (or something) opened a GitHub PR or GitLab MR and it needs a review | `plai review org/repo#123` (default `review_type: pr`) |
+| Someone (or something) opened a GitHub PR or GitLab MR and it needs a review | `plai review org/repo/123` (default `review_type: pr`) |
 | You just made a local commit and want a fast sanity check before pushing/opening a PR | `plai review --commit` |
 
 ## Reading the output — do this, not stdout-grepping

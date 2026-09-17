@@ -58,9 +58,9 @@ def test_parser_plai_help_identifies_plaibook():
     assert "plaibook CLI" in help_text
     assert "plai" in help_text
     assert "pip install plaibook" in help_text
-    assert "plai review org/repo#123" in help_text
+    assert "plai review org/repo/123" in help_text
     assert "plai review --commit" in help_text
-    assert "plai review org/repo#123 --json" in help_text
+    assert "plai review org/repo/123 --json" in help_text
     assert "uv run plai" not in help_text
     assert "/10" not in help_text
     assert "spinner" in help_text.lower()
@@ -71,18 +71,18 @@ def test_parser_plai_help_identifies_plaibook():
 
 def test_parser_debug_and_vv_set_ansible_verbosity():
     parser = build_parser(prog="plai")
-    quiet = parser.parse_args(["review", "org/repo#1"])
+    quiet = parser.parse_args(["review", "org/repo/1"])
     assert ansible_verbosity(quiet) == 0
-    one = parser.parse_args(["review", "org/repo#1", "-v"])
+    one = parser.parse_args(["review", "org/repo/1", "-v"])
     assert one.verbose == 1
     assert ansible_verbosity(one) == 1
-    two = parser.parse_args(["review", "org/repo#1", "-vv"])
+    two = parser.parse_args(["review", "org/repo/1", "-vv"])
     assert two.verbose == 2
     assert ansible_verbosity(two) == 2
-    debug = parser.parse_args(["review", "org/repo#1", "--debug"])
+    debug = parser.parse_args(["review", "org/repo/1", "--debug"])
     assert debug.debug is True
     assert ansible_verbosity(debug) == 2
-    debug_plus = parser.parse_args(["review", "org/repo#1", "-vvv", "--debug"])
+    debug_plus = parser.parse_args(["review", "org/repo/1", "-vvv", "--debug"])
     assert ansible_verbosity(debug_plus) == 3
 
 
@@ -118,11 +118,11 @@ def test_extra_vars_commit_and_pr_and_notes():
         "commit_sha": "abc1234",
     }
     pr = extra_vars_from_args(
-        _args(target="org/repo#123", review_extra_notes="Note: intentional", post=True),
+        _args(target="org/repo/123", review_extra_notes="Note: intentional", post=True),
         "runId0123456789",
     )
     assert pr["review_type"] == "pr"
-    assert pr["review_targets_raw"] == "org/repo#123"
+    assert pr["review_targets_raw"] == "org/repo/123"
     assert pr["review_extra_notes"] == "Note: intentional"
     assert pr["post_results"] is True
     branch = extra_vars_from_args(_args(branch_target="org/repo@main"), "abc")
@@ -133,7 +133,7 @@ def test_extra_vars_commit_and_pr_and_notes():
 def test_extra_vars_sandbox_and_passthrough():
     extras = extra_vars_from_args(
         _args(
-            target="org/repo#1",
+            target="org/repo/1",
             use_sandbox=False,
             cli_extra_vars=["review_clone_url_override=file:///tmp/x.git"],
         ),
@@ -142,7 +142,7 @@ def test_extra_vars_sandbox_and_passthrough():
     assert extras["use_sandbox"] is False
     assert extras["review_clone_url_override"] == "file:///tmp/x.git"
     extras = extra_vars_from_args(
-        _args(target="org/repo#1", cli_extra_vars=["use_sandbox=true"]),
+        _args(target="org/repo/1", cli_extra_vars=["use_sandbox=true"]),
         "runId0123456789",
     )
     assert extras["use_sandbox"] is True
@@ -208,25 +208,25 @@ def test_cmd_review_reports_collection_install_error(tmp_path, monkeypatch, caps
 
 
 def test_extra_vars_force_disables_same_commit_fast_path():
-    extras = extra_vars_from_args(_args(target="org/repo#1", force=True), "runId0123456789")
+    extras = extra_vars_from_args(_args(target="org/repo/1", force=True), "runId0123456789")
     assert extras["review_same_commit_fast_path_enabled"] is False
-    extras = extra_vars_from_args(_args(target="org/repo#1"), "runId0123456789")
+    extras = extra_vars_from_args(_args(target="org/repo/1"), "runId0123456789")
     assert "review_same_commit_fast_path_enabled" not in extras
 
 
 def test_parser_force_short_flag():
     parser = build_parser(prog="plai")
-    args = parser.parse_args(["review", "org/repo#1", "-f"])
+    args = parser.parse_args(["review", "org/repo/1", "-f"])
     assert args.force is True
     help_text = parser.format_help()
     assert "-f" in help_text
     assert "--force" in help_text
-    assert "plai review org/repo#123 -f" in help_text
+    assert "plai review org/repo/123 -f" in help_text
 
 
 def test_parser_provider_and_no_sandbox():
     parser = build_parser(prog="plai")
-    args = parser.parse_args(["review", "org/repo#1", "--no-sandbox", "--provider", "cursor"])
+    args = parser.parse_args(["review", "org/repo/1", "--no-sandbox", "--provider", "cursor"])
     assert args.use_sandbox is False
     assert args.provider == "cursor"
     help_text = parser.format_help()
@@ -311,8 +311,8 @@ def test_sandbox_fallback_fails_closed_when_sdk_missing(monkeypatch, capsys):
 
     monkeypatch.setattr("plaibook.cli.openshell_available", lambda: False)
     monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: False)
-    extras = {"review_type": "pr", "review_targets_raw": "org/repo#1"}
-    error = _apply_sandbox_fallback(_args(target="org/repo#1"), extras)
+    extras = {"review_type": "pr", "review_targets_raw": "org/repo/1"}
+    error = _apply_sandbox_fallback(_args(target="org/repo/1"), extras)
     assert error is not None
     assert "require a sandbox" in error
     assert "--no-sandbox" in error
@@ -325,8 +325,8 @@ def test_sandbox_fallback_explicit_no_sandbox_when_sdk_missing(monkeypatch):
 
     monkeypatch.setattr("plaibook.cli.openshell_available", lambda: False)
     monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: False)
-    extras = {"review_type": "pr", "review_targets_raw": "org/repo#1", "use_sandbox": False}
-    error = _apply_sandbox_fallback(_args(target="org/repo#1", use_sandbox=False), extras)
+    extras = {"review_type": "pr", "review_targets_raw": "org/repo/1", "use_sandbox": False}
+    error = _apply_sandbox_fallback(_args(target="org/repo/1", use_sandbox=False), extras)
     assert error is None
     assert extras["use_sandbox"] is False
 
@@ -336,8 +336,8 @@ def test_sandbox_fallback_quiet_when_already_inside_openshell(monkeypatch, capsy
 
     monkeypatch.setattr("plaibook.cli.openshell_available", lambda: False)
     monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: True)
-    extras = {"review_type": "pr", "review_targets_raw": "org/repo#1"}
-    error = _apply_sandbox_fallback(_args(target="org/repo#1"), extras)
+    extras = {"review_type": "pr", "review_targets_raw": "org/repo/1"}
+    error = _apply_sandbox_fallback(_args(target="org/repo/1"), extras)
     assert error is None
     assert extras["use_sandbox"] is False
     assert capsys.readouterr().err == ""
@@ -345,7 +345,7 @@ def test_sandbox_fallback_quiet_when_already_inside_openshell(monkeypatch, capsy
 
 def test_json_extra_vars_keep_colons():
     extras = extra_vars_from_args(
-        _args(target="org/repo#1", review_extra_notes="Note: this is intentional"),
+        _args(target="org/repo/1", review_extra_notes="Note: this is intentional"),
         "idididididididid",
     )
     encoded = json.dumps(extras)
@@ -1056,7 +1056,7 @@ def test_cmd_review_pr_fails_closed_without_openshell(tmp_path, monkeypatch, cap
         lambda *args, **kwargs: called.append(True),
     )
 
-    code = cmd_review(_args(target="org/repo#1", playbook_root=str(checkout)))
+    code = cmd_review(_args(target="org/repo/1", playbook_root=str(checkout)))
     err = capsys.readouterr().err
     assert code == 2
     assert called == []
@@ -1178,7 +1178,7 @@ def test_run_ansible_playbook_times_out(tmp_path, monkeypatch):
 def test_extra_vars_rejects_last_run_id_override():
     try:
         extra_vars_from_args(
-            _args(target="org/repo#1", cli_extra_vars=["last_run_id=attacker"]),
+            _args(target="org/repo/1", cli_extra_vars=["last_run_id=attacker"]),
             "runId0123456789",
         )
     except ValueError as exc:

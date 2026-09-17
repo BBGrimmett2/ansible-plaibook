@@ -61,11 +61,11 @@ successful upload. Cut the release soon after configuring it.
 
 ```bash
 plai review
-plai review org/repo#123
+plai review org/repo/123
 plai review --commit
-plai review org/repo#123 --json
-plai review org/repo#123 -f
-plaibook review org/repo#123
+plai review org/repo/123 --json
+plai review org/repo/123 -f
+plaibook review org/repo/123
 ```
 
 `--yaml` is the YAML form of `--json`. `-v` passes `-v` to

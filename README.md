@@ -20,7 +20,7 @@ collections into `~/.cache/ansible-plaibook/collections` (never
 `~/.ansible`). No checkout, no `ansible-galaxy` against your home
 tree. See [`plaibook/README.md`](plaibook/README.md). `plai review`
 with no arguments reviews `HEAD` in the current directory;
-`plai review org/repo#123` is the PR/MR form. `ansible-playbook
+`plai review org/repo/123` is the PR/MR form. `ansible-playbook
 review.yml` remains the AAP path. Until this version is on PyPI, the
 same wheel is `pip install .` from this checkout. Contributors still
 `uv sync --extra dev` — see [CONTRIBUTING](CONTRIBUTING.md).
@@ -121,11 +121,11 @@ One playbook, `review_type` selects the mode (`pr` | `branch` |
    always knows where to look, no timestamp-guessing).
 
 ```bash
-plai review org/repo#123
-plaibook review org/repo#123
+plai review org/repo/123
+plaibook review org/repo/123
 plai review https://gitlab.example.com/org/repo/-/merge_requests/45
 # AAP / EE / power-user path:
-ansible-playbook review.yml -e review_targets_raw="org/repo#123"
+ansible-playbook review.yml -e review_targets_raw="org/repo/123"
 ```
 
 Runs in an OpenShell sandbox by default (`use_sandbox: true`) since

@@ -27,10 +27,10 @@ the same wheel. AAP / execution-environment jobs keep calling
 ## Review a GitHub PR or GitLab MR
 
 ```bash
-plai review org/repo#123
-plaibook review org/repo#123
+plai review org/repo/123
+plaibook review org/repo/123
 plai review https://github.com/org/repo/pull/12
-plai review org/repo!34
+plai review gitlab:org/repo/34
 ```
 
 These assume `plaibook` is installed (`pip install plaibook`, or
@@ -47,16 +47,17 @@ you pass `-f` / `--force`.
 AAP / execution-environment runs still invoke the playbook:
 
 ```bash
-ansible-playbook review.yml -e review_targets_raw="org/repo#123"
+ansible-playbook review.yml -e review_targets_raw=org/repo/123
 ```
 
 `review_targets_raw` accepts a GitHub PR URL, a GitLab MR URL, or a bare
-`org/repo#N` (GitHub) / `org/repo!N` (GitLab) identifier. Pass several
-targets at once on the playbook path as a newline-separated string, or
-use the JSON-list form:
+`org/repo/N` (GitHub) / `gitlab:org/repo/N` (GitLab) identifier. Those
+bare forms are safe unquoted in bash (`#` is a comment, `!` is history).
+Pass several targets at once on the playbook path as a newline-separated
+string, or use the JSON-list form:
 
 ```bash
-ansible-playbook review.yml -e '{"review_targets": ["org/repo#1", "org/repo#2"]}'
+ansible-playbook review.yml -e '{"review_targets": ["org/repo/1", "org/repo/2"]}'
 ```
 
 ## Review a single local commit: fast and cheap
@@ -159,7 +160,7 @@ Reviewing is safe to automate by default; posting is a write to shared
 state and requires explicit opt-in:
 
 ```bash
-plai review org/repo!34 --post
+plai review gitlab:org/repo/34 --post
 # AAP / EE:
-ansible-playbook review.yml -e review_targets_raw="org/repo!34" -e post_results=true
+ansible-playbook review.yml -e review_targets_raw=gitlab:org/repo/34 -e post_results=true
 ```

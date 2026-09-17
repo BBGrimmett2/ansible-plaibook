@@ -74,19 +74,19 @@ AAP / execution-environment jobs keep calling ansible-playbook review.yml.
 Examples:
   pip install plaibook
   plai review
-  plai review org/repo#123
-  plaibook review org/repo#123
+  plai review org/repo/123
+  plaibook review org/repo/123
   plai review --commit
   plai review --commit --repo /path/to/repo --sha abc1234
-  plai review org/repo#123 --json
-  plai review org/repo#123 --yaml
-  plai review org/repo#123 -v
-  plai review org/repo#123 -vv
-  plai review org/repo#123 --debug
-  plai review org/repo#123 --full
-  plai review org/repo#123 -f
-  plai review org/repo#123 --provider cursor
-  plai review org/repo#123 --no-sandbox
+  plai review org/repo/123 --json
+  plai review org/repo/123 --yaml
+  plai review org/repo/123 -v
+  plai review org/repo/123 -vv
+  plai review org/repo/123 --debug
+  plai review org/repo/123 --full
+  plai review org/repo/123 -f
+  plai review org/repo/123 --provider cursor
+  plai review org/repo/123 --no-sandbox
 """
 
 
@@ -120,7 +120,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     review.add_argument(
         "target",
         nargs="?",
-        help="PR/MR identifier: org/repo#N, org/repo!N, or a full GitHub/GitLab URL.",
+        help="PR/MR identifier: org/repo/N, gitlab:org/repo/N, or a full GitHub/GitLab URL.",
     )
     mode = review.add_mutually_exclusive_group()
     mode.add_argument(
