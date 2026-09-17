@@ -61,6 +61,8 @@ output goes to stderr so stdout stays parseable. -vv / --debug passes -vv
 the findings.md report. A score line plus finding counts is not a review.
 Same-commit cache hits print that they reused the prior review (why cost
 is $0.00). -f / --force disables that fast path and re-runs the lenses.
+A SKIPPED verdict (CI failing on the PR head) prints why and the failing
+check names; pass `-e review_require_ci_passing=false` to review anyway.
 
 First review with no operator config prompts for a provider and writes
 ~/.config/ansible-plaibook/vars.yml. Cursor defaults to gpt-5.6-luna / high.

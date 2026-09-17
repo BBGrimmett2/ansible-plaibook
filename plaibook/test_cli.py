@@ -67,6 +67,8 @@ def test_parser_plai_help_identifies_plaibook():
     assert "lenses" in help_text
     assert "--debug" in help_text
     assert "-vv" in help_text
+    assert "SKIPPED" in help_text
+    assert "review_require_ci_passing=false" in help_text
 
 
 def test_parser_debug_and_vv_set_ansible_verbosity():
@@ -576,6 +578,101 @@ def test_pretty_explains_same_commit_cache_hit():
     assert "$0.00 is expected" in pretty
     assert "Re-run with -f to force" in pretty
     assert "$0.0000" in pretty
+
+
+def test_pretty_explains_ci_preflight_skip_without_full_report():
+    pretty = format_pretty(
+        {
+            "cost_usd": 0,
+            "status": "ok",
+            "targets": [
+                {
+                    "target": "org/repo#2134",
+                    "verdict": "SKIPPED",
+                    "score": 0.0,
+                    "ci_preflight_failed": True,
+                    "skip_reason": (
+                        "CI checks are failing on the PR head commit "
+                        "(b511616974f692cb64113056e5fc22681ad55dd4). "
+                        "Lens agents were not dispatched."
+                    ),
+                    "skip_hint": "Pass `-e review_require_ci_passing=false` to bypass.",
+                    "failing_checks": [
+                        {
+                            "name": "Test Python 3.10 (windows-latest)",
+                            "url": "https://github.com/org/repo/actions/runs/1",
+                        },
+                        {"name": "Test Python 3.14 (ubuntu-latest)"},
+                    ],
+                    "report": (
+                        "## Code Review: org/repo\n\n"
+                        "### Verdict: SKIPPED\n\n"
+                        "full rendered skip report should stay behind --full\n"
+                    ),
+                }
+            ],
+        }
+    )
+    assert pretty.startswith("SKIPPED  org/repo#2134\n")
+    assert "0.0%" not in pretty
+    assert "CI checks are failing on the PR head commit" in pretty
+    assert "b511616974f692cb64113056e5fc22681ad55dd4" in pretty
+    assert "Failing checks:" in pretty
+    assert "Test Python 3.10 (windows-latest)" in pretty
+    assert "Test Python 3.14 (ubuntu-latest)" in pretty
+    assert "review_require_ci_passing=false" in pretty
+    assert "https://github.com/org/repo/actions/runs/1" not in pretty
+    assert "full rendered skip report should stay behind --full" not in pretty
+    full = format_pretty(
+        {
+            "cost_usd": 0,
+            "targets": [
+                {
+                    "target": "org/repo#2134",
+                    "verdict": "SKIPPED",
+                    "ci_preflight_failed": True,
+                    "skip_reason": "CI checks are failing on the PR head commit.",
+                    "report": "full rendered skip report should stay behind --full",
+                }
+            ],
+        },
+        full=True,
+    )
+    assert "full rendered skip report should stay behind --full" in full
+
+
+def test_pretty_skip_falls_back_to_report_when_structured_fields_missing():
+    pretty = format_pretty(
+        {
+            "cost_usd": 0,
+            "targets": [
+                {
+                    "target": "org/repo#1",
+                    "verdict": "SKIPPED",
+                    "score": 0.0,
+                    "ci_preflight_failed": True,
+                    "report": (
+                        "## Code Review: org/repo (github-org-repo-1)\n\n"
+                        "### Verdict: SKIPPED\n\n"
+                        "Review skipped: CI checks are failing on the PR head "
+                        "commit (abc123). Lens agents were not dispatched to "
+                        "avoid model spend on known-broken code. Pass "
+                        "`-e review_require_ci_passing=false` to bypass.\n\n"
+                        "### Failing Checks:\n"
+                        "- **ci/unit-tests** (https://ci.example/1)\n"
+                        "- **ci/lint** (https://ci.example/2)\n"
+                    ),
+                }
+            ],
+        }
+    )
+    assert "Review skipped: CI checks are failing on the PR head commit" in pretty
+    assert "Failing checks:" in pretty
+    assert "ci/unit-tests" in pretty
+    assert "ci/lint" in pretty
+    assert "https://ci.example/1" not in pretty
+    assert "review_require_ci_passing=false" in pretty
+    assert "## Code Review" not in pretty
 
 
 def test_enrich_prefers_run_scoped_summary_over_canonical(tmp_path):
