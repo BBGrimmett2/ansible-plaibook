@@ -45,7 +45,8 @@ plai and plaibook are the same program. The pip/uv distribution name is plaibook
 pip install plaibook vendors review.yml into the wheel. plai review with no
 arguments reviews HEAD in the current directory. First run installs Galaxy
 collections into ~/.cache/ansible-plaibook/collections (never ~/.ansible).
-Override the playbook tree with --root / PLAIBOOK_ROOT. The CLI shells out
+That install is the playbook; --root points at a local checkout instead.
+The CLI shells out
 to ansible-playbook and reads last_run.<run_id>.json. It does not rescore
 findings or scrape playbook stdout. It does not yet run ansible-playbook
 aknochow.plaibook.review (that FQCN lands when plaibook is a collection).
@@ -242,7 +243,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     review.add_argument(
         "--root",
         dest="playbook_root",
-        help="Playbook tree containing review.yml (default: this install, or PLAIBOOK_ROOT).",
+        help="Use a local playbook checkout instead of this pip install.",
     )
     return parser
 

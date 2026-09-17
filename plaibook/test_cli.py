@@ -408,15 +408,35 @@ def test_ansible_playbook_bin_prefers_venv_when_python_is_symlink(tmp_path, monk
     assert Path(ansible_playbook_bin()).resolve() == venv_ap.resolve()
 
 
-def test_find_playbook_root_prefers_env(tmp_path, monkeypatch):
+def test_find_playbook_root_wheel_ignores_stale_plaibook_root(tmp_path):
+    """pip install must use the wheel even if the host exported PLAIBOOK_ROOT."""
+    pkg = tmp_path / "site-packages" / "plaibook"
+    share = pkg / "share"
+    share.mkdir(parents=True)
+    (share / "review.yml").write_text("--- bundled\n")
+    (share / "ansible.cfg").write_text("[defaults]\n")
+    stale = tmp_path / "image-snapshot"
+    stale.mkdir()
+    (stale / "review.yml").write_text("--- stale\n")
+    (stale / "ansible.cfg").write_text("[defaults]\n")
+    found = find_playbook_root(
+        env={"PLAIBOOK_ROOT": str(stale)},
+        package_dir=pkg,
+    )
+    assert found == share.resolve()
+
+
+def test_find_playbook_root_env_is_last_resort_when_install_has_no_playbook(tmp_path):
     checkout = tmp_path / "ansible-plaibook"
     checkout.mkdir()
     (checkout / "review.yml").write_text("---\n")
     (checkout / "ansible.cfg").write_text("[defaults]\n")
-    other = tmp_path / "other"
-    other.mkdir()
-    monkeypatch.chdir(other)
-    found = find_playbook_root(start=other, env={"PLAIBOOK_ROOT": str(checkout)})
+    empty_pkg = tmp_path / "site-packages" / "plaibook"
+    empty_pkg.mkdir(parents=True)
+    found = find_playbook_root(
+        env={"PLAIBOOK_ROOT": str(checkout)},
+        package_dir=empty_pkg,
+    )
     assert found == checkout.resolve()
 
 

@@ -35,8 +35,8 @@ plai review gitlab:org/repo/34
 
 These assume `plaibook` is installed (`pip install plaibook`, or
 `pip install .` from this checkout). The CLI locates `review.yml` from
-the wheel (or a checkout / `--root` / `PLAIBOOK_ROOT`) and leaves the
-caller's cwd alone, so you can review another repo without `cd`.
+that install. `--root` points at a local checkout instead. cwd is left
+alone, so you can review another repo without `cd`.
 
 The first `plai review` with no operator config asks which provider to
 use and writes `~/.config/ansible-plaibook/vars.yml`. Cursor defaults
