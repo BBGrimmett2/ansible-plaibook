@@ -78,6 +78,7 @@ Examples:
   pip install plaibook
   plai review
   plai review org/repo/123
+  plai review org/repo/pull/123
   plaibook review org/repo/123
   plai review --commit
   plai review --commit --repo /path/to/repo --sha abc1234
@@ -123,7 +124,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     review.add_argument(
         "target",
         nargs="?",
-        help="PR/MR identifier: org/repo/N, gitlab:org/repo/N, or a full GitHub/GitLab URL.",
+        help="PR/MR identifier: org/repo/N, org/repo/pull/N, gitlab:org/repo/N, or a full GitHub/GitLab URL.",
     )
     mode = review.add_mutually_exclusive_group()
     mode.add_argument(

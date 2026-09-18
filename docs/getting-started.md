@@ -29,6 +29,7 @@ the same wheel. AAP / execution-environment jobs keep calling
 ```bash
 plai review org/repo/123
 plaibook review org/repo/123
+plai review org/repo/pull/123
 plai review https://github.com/org/repo/pull/12
 plai review gitlab:org/repo/34
 ```
@@ -51,8 +52,9 @@ ansible-playbook review.yml -e review_targets_raw=org/repo/123
 ```
 
 `review_targets_raw` accepts a GitHub PR URL, a GitLab MR URL, or a bare
-`org/repo/N` (GitHub) / `gitlab:org/repo/N` (GitLab) identifier. Those
-bare forms are safe unquoted in bash (`#` is a comment, `!` is history).
+`org/repo/N` / `org/repo/pull/N` (GitHub) / `gitlab:org/repo/N` (GitLab)
+identifier. Those bare forms are safe unquoted in bash (`#` is a comment,
+`!` is history).
 Pass several targets at once on the playbook path as a newline-separated
 string, or use the JSON-list form:
 

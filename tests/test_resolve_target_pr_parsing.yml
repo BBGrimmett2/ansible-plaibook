@@ -43,6 +43,34 @@
           - review_hostname == ""
         fail_msg: "GitHub bare form: got platform={{ review_platform }} org_repo={{ review_org_repo }} number={{ review_number }} hostname='{{ review_hostname }}'"
 
+    - name: "Scenario: GitHub URL path tail (org/repo/pull/N)"
+      vars:
+        review_target: "aknochow/ansible-plaibook/pull/29"
+      ansible.builtin.include_tasks: "{{ parse_pr_target_path }}"
+
+    - name: Assert GitHub URL path tail parsed correctly
+      ansible.builtin.assert:
+        that:
+          - review_platform == "github"
+          - review_org_repo == "aknochow/ansible-plaibook"
+          - review_number == "29"
+          - review_hostname == ""
+        fail_msg: "GitHub path tail: got platform={{ review_platform }} org_repo={{ review_org_repo }} number={{ review_number }} hostname='{{ review_hostname }}'"
+
+    - name: "Scenario: GitHub host+path without scheme (github.com/org/repo/pull/N)"
+      vars:
+        review_target: "github.com/aknochow/ansible-plaibook/pull/29"
+      ansible.builtin.include_tasks: "{{ parse_pr_target_path }}"
+
+    - name: Assert GitHub host+path without scheme parsed correctly
+      ansible.builtin.assert:
+        that:
+          - review_platform == "github"
+          - review_org_repo == "aknochow/ansible-plaibook"
+          - review_number == "29"
+          - review_hostname == ""
+        fail_msg: "GitHub host+path: got platform={{ review_platform }} org_repo={{ review_org_repo }} number={{ review_number }} hostname='{{ review_hostname }}'"
+
     - name: "Scenario: legacy GitHub org/repo#N is rejected"
       block:
         - name: Parse legacy hash form (expected to fail)

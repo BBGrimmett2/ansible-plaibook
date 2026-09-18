@@ -3,24 +3,26 @@
 # Extracted for testability (avoids network calls in test_resolve_target_pr_parsing.yml).
 #
 # Bare identifiers are slash-separated so they are safe unquoted in bash
-# (`#` is a comment, `!` is history expansion). GitHub is org/repo/N.
-# GitLab/Gitea use a platform prefix.
+# (`#` is a comment, `!` is history expansion). GitHub is org/repo/N
+# or org/repo/pull/N (URL path after github.com). GitLab/Gitea use a
+# platform prefix.
 
 - name: Reject # / ! bare identifiers (shell-special; not accepted)
   ansible.builtin.fail:
     msg: >-
       review_target '{{ review_target }}' uses # or ! as a separator.
-      Those are special to bash (comment / history). Use org/repo/N for
-      GitHub, gitlab:org/repo/N or gitlab:host:org/repo/N for GitLab,
-      gitea:org/repo/N or gitea:host:org/repo/N for Gitea, or a full
-      PR/MR URL.
+      Those are special to bash (comment / history). Use org/repo/N or
+      org/repo/pull/N for GitHub, gitlab:org/repo/N or
+      gitlab:host:org/repo/N for GitLab, gitea:org/repo/N or
+      gitea:host:org/repo/N for Gitea, or a full PR/MR URL.
   when: review_target is regex('.*(#|!)\\d+$') and review_target is not regex('^https?://')
 
 - name: Parse the review target identifier
   ansible.builtin.set_fact:
-    _gh_url_match: "{{ review_target | regex_search('^https?://github\\.com/([^/]+/[^/]+)/pull/(\\d+)', '\\1', '\\2') }}"
+    _gh_url_match: "{{ review_target | regex_search('^(?:https?://)?github\\.com/([^/]+/[^/]+)/pull/(\\d+)', '\\1', '\\2') }}"
     _gt_url_match: "{{ review_target | regex_search('^(https?)://(?!github\\.com)([^/]+)/([^/]+/[^/]+)/pulls?/(\\d+)', '\\1', '\\2', '\\3', '\\4') }}"
     _gl_url_match: "{{ review_target | regex_search('^https?://([^/]+)/(.+)/-/merge_requests/(\\d+)', '\\1', '\\2', '\\3') }}"
+    _gh_pull_path_match: "{{ review_target | regex_search('^([A-Za-z0-9_.~-]+/[A-Za-z0-9_.~-]+)/pull/(\\d+)$', '\\1', '\\2') }}"
     _gh_bare_match: "{{ review_target | regex_search('^([A-Za-z0-9_.~-]+/[A-Za-z0-9_.~-]+)/(\\d+)$', '\\1', '\\2') }}"
     _gt_bare_host_match: "{{ review_target | regex_search('^gitea:([A-Za-z0-9._-]+):([^/]+/[^/]+)/(\\d+)$', '\\1', '\\2', '\\3') }}"
     _gt_bare_match: "{{ review_target | regex_search('^gitea:([^/]+/[^/]+)/(\\d+)$', '\\1', '\\2') }}"
@@ -30,7 +32,7 @@
 - name: Resolve platform, org/repo, number, hostname
   ansible.builtin.set_fact:
     review_platform: >-
-      {{ 'github' if (_gh_url_match or _gh_bare_match)
+      {{ 'github' if (_gh_url_match or _gh_pull_path_match or _gh_bare_match)
          else 'gitea' if (_gt_url_match or _gt_bare_host_match or _gt_bare_match)
          else 'gitlab' }}
     review_scheme: >-
@@ -38,6 +40,7 @@
          else 'https' }}
     review_org_repo: >-
       {{ (_gh_url_match[0] if _gh_url_match
+          else _gh_pull_path_match[0] if _gh_pull_path_match
           else _gh_bare_match[0] if _gh_bare_match
           else _gt_url_match[2] if _gt_url_match
           else _gt_bare_host_match[1] if _gt_bare_host_match
@@ -48,6 +51,7 @@
           else '') }}
     review_number: >-
       {{ (_gh_url_match[1] if _gh_url_match
+          else _gh_pull_path_match[1] if _gh_pull_path_match
           else _gh_bare_match[1] if _gh_bare_match
           else _gt_url_match[3] if _gt_url_match
           else _gt_bare_host_match[2] if _gt_bare_host_match
@@ -68,8 +72,8 @@
   ansible.builtin.fail:
     msg: >-
       Could not parse review_target '{{ review_target }}'. Expected a GitHub
-      PR URL, Gitea PR URL, GitLab MR URL, 'org/repo/N' (GitHub),
-      'gitea:org/repo/N' or 'gitea:host:org/repo/N' (Gitea),
+      PR URL, Gitea PR URL, GitLab MR URL, 'org/repo/N' or 'org/repo/pull/N'
+      (GitHub), 'gitea:org/repo/N' or 'gitea:host:org/repo/N' (Gitea),
       'gitlab:org/repo/N' or 'gitlab:host:org/repo/N' (GitLab).
   when: not review_org_repo or not review_number
 

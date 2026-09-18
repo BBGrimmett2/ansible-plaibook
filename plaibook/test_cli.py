@@ -59,6 +59,7 @@ def test_parser_plai_help_identifies_plaibook():
     assert "plai" in help_text
     assert "pip install plaibook" in help_text
     assert "plai review org/repo/123" in help_text
+    assert "plai review org/repo/pull/123" in help_text
     assert "plai review --commit" in help_text
     assert "plai review org/repo/123 --json" in help_text
     assert "uv run plai" not in help_text
