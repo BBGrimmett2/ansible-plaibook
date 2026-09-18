@@ -183,6 +183,34 @@ def create_progress_file(*, directory: str | None = None) -> tuple[str, str]:
     return progress_dir, progress_path
 
 
+def _progress_allowed_roots() -> list[str]:
+    """Process tempdir (tests / AAP) and the CLI cache scratch from #52."""
+    from plaibook.playbook import RUNTIME_TMP_DIRNAME, last_run_dir
+
+    roots: list[str] = []
+    for raw in (
+        tempfile.gettempdir(),
+        str(last_run_dir() / RUNTIME_TMP_DIRNAME),
+    ):
+        try:
+            real = os.path.realpath(raw)
+        except OSError:
+            continue
+        if real not in roots:
+            roots.append(real)
+    return roots
+
+
+def _parent_under_progress_root(real_parent: str) -> bool:
+    for root in _progress_allowed_roots():
+        try:
+            if os.path.commonpath([root, real_parent]) == root:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def allowed_progress_path(path: str) -> str | None:
     """Return the path if it is a CLI-owned spinner file; otherwise None."""
     raw = (path or "").strip()
@@ -194,9 +222,8 @@ def allowed_progress_path(path: str) -> str | None:
     if os.sep in name or (os.altsep and os.altsep in name):
         return None
     try:
-        real_tmp = os.path.realpath(tempfile.gettempdir())
         real_parent = os.path.realpath(os.path.dirname(raw))
-        if os.path.commonpath([real_tmp, real_parent]) != real_tmp:
+        if not _parent_under_progress_root(real_parent):
             return None
         parent_stat = os.stat(real_parent)
     except (OSError, ValueError):
