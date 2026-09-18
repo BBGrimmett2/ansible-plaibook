@@ -23,6 +23,11 @@
         review_short_sha: "{{ (_pr_context.head_sha | default('', true))[:7] }}"
         review_branch: "{{ review_platform }}-{{ review_org_repo | regex_replace('/', '-') }}-{{ review_number }}"
         review_ci_failing_checks: "{{ _pr_context.failing_checks | default([]) }}"
+        review_skip_reason: >-
+          CI checks are failing on the PR head commit
+          ({{ _pr_context.head_sha | default('unknown', true) }}).
+          Lens agents were not dispatched.
+        review_skip_hint: "Pass `-e review_require_ci_passing=false` to bypass."
 
     - name: Render skipped review report
       ansible.builtin.set_fact:
@@ -47,5 +52,8 @@
             'findings_path': '',
             'summary_run_scoped_path': '',
             'findings_run_scoped_path': '',
-            'ci_preflight_failed': true
+            'ci_preflight_failed': true,
+            'skip_reason': review_skip_reason,
+            'skip_hint': review_skip_hint,
+            'failing_checks': review_ci_failing_checks | default([])
           }] }}

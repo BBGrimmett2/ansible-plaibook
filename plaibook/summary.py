@@ -111,7 +111,8 @@ def format_pretty(document: dict[str, Any], *, full: bool = False) -> str:
     """Human review: target, verdict, 0-100 scores, Critical/Major bodies.
 
     Minor/nit stay as counts. Full findings.md is not dumped unless
-    ``full`` (``--full`` / ``-v``).
+    ``full`` (``--full`` / ``-v``). SKIPPED (CI preflight) always prints
+    the reason and failing check names; the 0.0 score is omitted.
     """
     lines: list[str] = []
     targets = document.get("targets") or []
@@ -127,7 +128,8 @@ def format_pretty(document: dict[str, Any], *, full: bool = False) -> str:
     for target in targets:
         verdict = sanitize_display_line(target.get("verdict") or document.get("status") or "UNKNOWN")
         score = target.get("score_overall", target.get("score"))
-        score_text = _percent(score)
+        skipped = _is_skipped(target, verdict)
+        score_text = "" if skipped else _percent(score)
         name = sanitize_display_line(target.get("target") or "")
         header = f"{verdict}"
         if score_text:
@@ -139,6 +141,9 @@ def format_pretty(document: dict[str, Any], *, full: bool = False) -> str:
         cache_line = _cache_hit_line(document, target)
         if cache_line:
             lines.append(cache_line)
+
+        if skipped:
+            lines.extend(_skipped_lines(target))
 
         scores = target.get("scores") or {}
         if scores:
@@ -179,6 +184,73 @@ def format_pretty(document: dict[str, Any], *, full: bool = False) -> str:
 
     lines.extend(_footer(document, targets))
     return "\n".join(lines) + "\n"
+
+
+def _is_skipped(target: dict[str, Any], verdict: str) -> bool:
+    return verdict.upper() == "SKIPPED" or bool(target.get("ci_preflight_failed"))
+
+
+def _skipped_lines(target: dict[str, Any]) -> list[str]:
+    """Why a review was SKIPPED, on the default TTY (not only -v / --full)."""
+    lines: list[str] = []
+    reason = str(target.get("skip_reason") or "").strip()
+    if not reason:
+        reason = _skip_reason_from_report(str(target.get("report") or ""))
+    if reason:
+        lines.append(f"  {sanitize_display_line(reason)}")
+
+    check_names = _failing_check_names(target)
+    if check_names:
+        lines.append("  Failing checks:")
+        for name in check_names:
+            lines.append(f"    - {name}")
+
+    hint = str(target.get("skip_hint") or "").strip()
+    if not hint and (
+        target.get("ci_preflight_failed")
+        or "review_require_ci_passing" in str(target.get("report") or "")
+    ):
+        hint = "Pass `-e review_require_ci_passing=false` to bypass."
+    if hint and hint not in reason and "review_require_ci_passing" not in reason:
+        lines.append(f"  {sanitize_display_line(hint)}")
+    return lines
+
+
+def _failing_check_names(target: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    for check in target.get("failing_checks") or []:
+        if isinstance(check, dict):
+            raw = check.get("name") or ""
+        else:
+            raw = check
+        name = sanitize_display_line(raw)
+        if name:
+            names.append(name)
+    if names:
+        return names
+    return _failing_check_names_from_report(str(target.get("report") or ""))
+
+
+def _skip_reason_from_report(report: str) -> str:
+    for line in sanitize_display_text(report).splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("review skipped:"):
+            return sanitize_display_line(stripped)
+    return ""
+
+
+_FAILING_CHECK_MD_RE = re.compile(r"^-\s+\*\*(.+?)\*\*")
+
+
+def _failing_check_names_from_report(report: str) -> list[str]:
+    names: list[str] = []
+    for line in (report or "").splitlines():
+        match = _FAILING_CHECK_MD_RE.match(line.strip())
+        if match:
+            name = sanitize_display_line(match.group(1))
+            if name:
+                names.append(name)
+    return names
 
 
 def _cache_hit_line(document: dict[str, Any], target: dict[str, Any]) -> str | None:

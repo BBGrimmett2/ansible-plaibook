@@ -67,6 +67,11 @@
               - pipeline_findings_reports[0].score | float == 0.0
               - pipeline_findings_reports[0].ci_preflight_failed | bool == true
               - pipeline_findings_reports[0].target == "my-org/my-repo#42"
+              - "'CI checks are failing' in pipeline_findings_reports[0].skip_reason"
+              - "'review_require_ci_passing=false' in pipeline_findings_reports[0].skip_hint"
+              - pipeline_findings_reports[0].failing_checks | length == 2
+              - pipeline_findings_reports[0].failing_checks[0].name == "ci/unit-tests"
+              - pipeline_findings_reports[0].failing_checks[1].name == "ci/lint"
               - "'ci/unit-tests' in pipeline_findings_reports[0].report"
               - "'ci/lint' in pipeline_findings_reports[0].report"
               - "'Review skipped: CI checks are failing' in pipeline_findings_reports[0].report"

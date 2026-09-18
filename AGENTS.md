@@ -127,7 +127,7 @@ uv run pytest action_plugins/test_foo.py                  # single file
 uv run ./scripts/run_playbook_tests.sh                    # offline Ansible playbook test suite
 uv run ansible-playbook review.yml --syntax-check
 plai review --commit                                      # fast, cheap, local (same as plaibook review --commit)
-plai review org/repo!N                                    # full PR/MR review
+plai review org/repo/N                                    # full GitHub PR review
 # AAP / EE keep ansible-playbook review.yml.
 # If .venv is not on PATH, uv run plai is the CONTRIBUTING invocation.
 ```

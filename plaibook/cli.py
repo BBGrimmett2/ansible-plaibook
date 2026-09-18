@@ -45,7 +45,8 @@ plai and plaibook are the same program. The pip/uv distribution name is plaibook
 pip install plaibook vendors review.yml into the wheel. plai review with no
 arguments reviews HEAD in the current directory. First run installs Galaxy
 collections into ~/.cache/ansible-plaibook/collections (never ~/.ansible).
-Override the playbook tree with --root / PLAIBOOK_ROOT. The CLI shells out
+That install is the playbook; --root points at a local checkout instead.
+The CLI shells out
 to ansible-playbook and reads last_run.<run_id>.json. It does not rescore
 findings or scrape playbook stdout. It does not yet run ansible-playbook
 aknochow.plaibook.review (that FQCN lands when plaibook is a collection).
@@ -61,6 +62,8 @@ output goes to stderr so stdout stays parseable. -vv / --debug passes -vv
 the findings.md report. A score line plus finding counts is not a review.
 Same-commit cache hits print that they reused the prior review (why cost
 is $0.00). -f / --force disables that fast path and re-runs the lenses.
+A SKIPPED verdict (CI failing on the PR head) prints why and the failing
+check names; pass `-e review_require_ci_passing=false` to review anyway.
 
 First review with no operator config prompts for a provider and writes
 ~/.config/ansible-plaibook/vars.yml. Cursor defaults to gpt-5.6-luna / high.
@@ -74,19 +77,20 @@ AAP / execution-environment jobs keep calling ansible-playbook review.yml.
 Examples:
   pip install plaibook
   plai review
-  plai review org/repo#123
-  plaibook review org/repo#123
+  plai review org/repo/123
+  plai review org/repo/pull/123
+  plaibook review org/repo/123
   plai review --commit
   plai review --commit --repo /path/to/repo --sha abc1234
-  plai review org/repo#123 --json
-  plai review org/repo#123 --yaml
-  plai review org/repo#123 -v
-  plai review org/repo#123 -vv
-  plai review org/repo#123 --debug
-  plai review org/repo#123 --full
-  plai review org/repo#123 -f
-  plai review org/repo#123 --provider cursor
-  plai review org/repo#123 --no-sandbox
+  plai review org/repo/123 --json
+  plai review org/repo/123 --yaml
+  plai review org/repo/123 -v
+  plai review org/repo/123 -vv
+  plai review org/repo/123 --debug
+  plai review org/repo/123 --full
+  plai review org/repo/123 -f
+  plai review org/repo/123 --provider cursor
+  plai review org/repo/123 --no-sandbox
 """
 
 
@@ -120,7 +124,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     review.add_argument(
         "target",
         nargs="?",
-        help="PR/MR identifier: org/repo#N, org/repo!N, or a full GitHub/GitLab URL.",
+        help="PR/MR identifier: org/repo/N, org/repo/pull/N, gitlab:org/repo/N, or a full GitHub/GitLab URL.",
     )
     mode = review.add_mutually_exclusive_group()
     mode.add_argument(
@@ -240,7 +244,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     review.add_argument(
         "--root",
         dest="playbook_root",
-        help="Playbook tree containing review.yml (default: this install, or PLAIBOOK_ROOT).",
+        help="Use a local playbook checkout instead of this pip install.",
     )
     return parser
 

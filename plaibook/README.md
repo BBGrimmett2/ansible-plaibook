@@ -61,11 +61,11 @@ successful upload. Cut the release soon after configuring it.
 
 ```bash
 plai review
-plai review org/repo#123
+plai review org/repo/123
 plai review --commit
-plai review org/repo#123 --json
-plai review org/repo#123 -f
-plaibook review org/repo#123
+plai review org/repo/123 --json
+plai review org/repo/123 -f
+plaibook review org/repo/123
 ```
 
 `--yaml` is the YAML form of `--json`. `-v` passes `-v` to
@@ -76,8 +76,8 @@ spinner. `--full` (or `-v`) adds the findings.md report.
 `-f` / `--force` re-runs lenses even when this commit was already
 reviewed. A same-commit cache hit is labeled in the pretty review so a
 $0.00 cost is not mistaken for a live run.
-`--root` / `PLAIBOOK_ROOT` select a playbook tree other than this
-install's bundled copy. First run with no operator config prompts for a
+`--root` selects a local playbook checkout instead of this install's
+bundled copy. First run with no operator config prompts for a
 provider and writes `~/.config/ansible-plaibook/vars.yml`. `--provider
 cursor` does the same non-interactively and defaults Cursor to
 `gpt-5.6-luna` / `high`. PR/branch reviews skip nested OpenShell when

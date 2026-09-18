@@ -7,8 +7,8 @@
 # roles/review/ for the shared per-type resolution logic.
 #
 # Usage:
-#   ansible-playbook review.yml -e review_targets_raw="https://github.com/org/repo/pull/12"
-#   ansible-playbook review.yml -e review_targets_raw="org/repo!34" -e use_sandbox=false
+#   ansible-playbook review.yml -e review_targets_raw=org/repo/12
+#   ansible-playbook review.yml -e review_targets_raw=gitlab:org/repo/34 -e use_sandbox=false
 #   ansible-playbook review.yml -e review_type=commit
 #   ansible-playbook review.yml -e review_type=commit -e commit_sha=abc1234 -e repo_path=/path/to/repo
 #
@@ -28,11 +28,12 @@
 # fail_on_regressions explicitly to override either default.
 #
 # review_targets_raw accepts GitHub PR URLs, GitLab MR URLs, or bare
-# "org/repo#N" (GitHub) / "org/repo!N" (GitLab) identifiers — plain
-# `key=value` extra-vars, no quoting/brackets needed. For more than one
-# target in a single run, either pass review_targets_raw as a
+# org/repo/N / org/repo/pull/N (GitHub) / gitlab:org/repo/N (GitLab)
+# identifiers — no quoting needed (bash treats # as a comment and ! as
+# history). For more
+# than one target in a single run, either pass review_targets_raw as a
 # newline-separated string, or use the JSON-list form directly:
-#   ansible-playbook review.yml -e '{"review_targets": ["org/repo#1", "org/repo#2"]}'
+#   ansible-playbook review.yml -e '{"review_targets": ["org/repo/1", "org/repo/2"]}'
 #
 # Sandbox SSH delegation uses a pure-Python, SDK-only relay
 # (aknochow.openshell's scripts/ssh_proxy.py) as the SSH ProxyCommand —

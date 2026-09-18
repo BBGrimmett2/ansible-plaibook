@@ -72,23 +72,16 @@ def find_playbook_root(
 ) -> Path:
     """Find the tree that contains review.yml + ansible.cfg.
 
-    Search order: PLAIBOOK_ROOT, parents of this package (editable
-    checkout), then the wheel's bundled share. cwd is never searched:
-    ``pip install plaibook && plai review`` must not pick up an
-    attacker-controlled review.yml from the repo being reviewed.
+    ``pip install plaibook && plai review`` uses this install: an
+    editable checkout (package parents) or the wheel's bundled share.
+    ``PLAIBOOK_ROOT`` is a last resort when this install has no
+    playbook, not a hijack of a working pip install. ``--root`` is the
+    checkout override (handled by the CLI). cwd is never searched:
+    a reviewed repo must not supply review.yml.
     ``start`` is accepted for call-site compatibility and ignored.
     """
     _ = start
     environ = os.environ if env is None else env
-    explicit = environ.get(ENV_ROOT, "").strip()
-    if explicit:
-        root = Path(explicit).expanduser().resolve()
-        if _is_playbook_root(root):
-            return root
-        raise PlaybookNotFoundError(
-            f"{ENV_ROOT}={root} does not contain {PLAYBOOK_NAME} and {ANSIBLE_CFG_NAME}"
-        )
-
     here = (package_dir or Path(__file__).resolve().parent).resolve()
     seen: set[Path] = set()
     for candidate in here.parents:
@@ -102,9 +95,18 @@ def find_playbook_root(
     if _is_playbook_root(bundled):
         return bundled
 
+    explicit = environ.get(ENV_ROOT, "").strip()
+    if explicit:
+        root = Path(explicit).expanduser().resolve()
+        if _is_playbook_root(root):
+            return root
+        raise PlaybookNotFoundError(
+            f"{ENV_ROOT}={root} does not contain {PLAYBOOK_NAME} and {ANSIBLE_CFG_NAME}"
+        )
+
     raise PlaybookNotFoundError(
         "Could not find review.yml. Reinstall plaibook (`pip install plaibook`) "
-        f"or set {ENV_ROOT} to an ansible-plaibook checkout."
+        f"or pass --root / set {ENV_ROOT} to an ansible-plaibook checkout."
     )
 
 

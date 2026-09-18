@@ -58,31 +58,34 @@ def test_parser_plai_help_identifies_plaibook():
     assert "plaibook CLI" in help_text
     assert "plai" in help_text
     assert "pip install plaibook" in help_text
-    assert "plai review org/repo#123" in help_text
+    assert "plai review org/repo/123" in help_text
+    assert "plai review org/repo/pull/123" in help_text
     assert "plai review --commit" in help_text
-    assert "plai review org/repo#123 --json" in help_text
+    assert "plai review org/repo/123 --json" in help_text
     assert "uv run plai" not in help_text
     assert "/10" not in help_text
     assert "spinner" in help_text.lower()
     assert "lenses" in help_text
     assert "--debug" in help_text
     assert "-vv" in help_text
+    assert "SKIPPED" in help_text
+    assert "review_require_ci_passing=false" in help_text
 
 
 def test_parser_debug_and_vv_set_ansible_verbosity():
     parser = build_parser(prog="plai")
-    quiet = parser.parse_args(["review", "org/repo#1"])
+    quiet = parser.parse_args(["review", "org/repo/1"])
     assert ansible_verbosity(quiet) == 0
-    one = parser.parse_args(["review", "org/repo#1", "-v"])
+    one = parser.parse_args(["review", "org/repo/1", "-v"])
     assert one.verbose == 1
     assert ansible_verbosity(one) == 1
-    two = parser.parse_args(["review", "org/repo#1", "-vv"])
+    two = parser.parse_args(["review", "org/repo/1", "-vv"])
     assert two.verbose == 2
     assert ansible_verbosity(two) == 2
-    debug = parser.parse_args(["review", "org/repo#1", "--debug"])
+    debug = parser.parse_args(["review", "org/repo/1", "--debug"])
     assert debug.debug is True
     assert ansible_verbosity(debug) == 2
-    debug_plus = parser.parse_args(["review", "org/repo#1", "-vvv", "--debug"])
+    debug_plus = parser.parse_args(["review", "org/repo/1", "-vvv", "--debug"])
     assert ansible_verbosity(debug_plus) == 3
 
 
@@ -118,11 +121,11 @@ def test_extra_vars_commit_and_pr_and_notes():
         "commit_sha": "abc1234",
     }
     pr = extra_vars_from_args(
-        _args(target="org/repo#123", review_extra_notes="Note: intentional", post=True),
+        _args(target="org/repo/123", review_extra_notes="Note: intentional", post=True),
         "runId0123456789",
     )
     assert pr["review_type"] == "pr"
-    assert pr["review_targets_raw"] == "org/repo#123"
+    assert pr["review_targets_raw"] == "org/repo/123"
     assert pr["review_extra_notes"] == "Note: intentional"
     assert pr["post_results"] is True
     branch = extra_vars_from_args(_args(branch_target="org/repo@main"), "abc")
@@ -133,7 +136,7 @@ def test_extra_vars_commit_and_pr_and_notes():
 def test_extra_vars_sandbox_and_passthrough():
     extras = extra_vars_from_args(
         _args(
-            target="org/repo#1",
+            target="org/repo/1",
             use_sandbox=False,
             cli_extra_vars=["review_clone_url_override=file:///tmp/x.git"],
         ),
@@ -142,7 +145,7 @@ def test_extra_vars_sandbox_and_passthrough():
     assert extras["use_sandbox"] is False
     assert extras["review_clone_url_override"] == "file:///tmp/x.git"
     extras = extra_vars_from_args(
-        _args(target="org/repo#1", cli_extra_vars=["use_sandbox=true"]),
+        _args(target="org/repo/1", cli_extra_vars=["use_sandbox=true"]),
         "runId0123456789",
     )
     assert extras["use_sandbox"] is True
@@ -208,25 +211,25 @@ def test_cmd_review_reports_collection_install_error(tmp_path, monkeypatch, caps
 
 
 def test_extra_vars_force_disables_same_commit_fast_path():
-    extras = extra_vars_from_args(_args(target="org/repo#1", force=True), "runId0123456789")
+    extras = extra_vars_from_args(_args(target="org/repo/1", force=True), "runId0123456789")
     assert extras["review_same_commit_fast_path_enabled"] is False
-    extras = extra_vars_from_args(_args(target="org/repo#1"), "runId0123456789")
+    extras = extra_vars_from_args(_args(target="org/repo/1"), "runId0123456789")
     assert "review_same_commit_fast_path_enabled" not in extras
 
 
 def test_parser_force_short_flag():
     parser = build_parser(prog="plai")
-    args = parser.parse_args(["review", "org/repo#1", "-f"])
+    args = parser.parse_args(["review", "org/repo/1", "-f"])
     assert args.force is True
     help_text = parser.format_help()
     assert "-f" in help_text
     assert "--force" in help_text
-    assert "plai review org/repo#123 -f" in help_text
+    assert "plai review org/repo/123 -f" in help_text
 
 
 def test_parser_provider_and_no_sandbox():
     parser = build_parser(prog="plai")
-    args = parser.parse_args(["review", "org/repo#1", "--no-sandbox", "--provider", "cursor"])
+    args = parser.parse_args(["review", "org/repo/1", "--no-sandbox", "--provider", "cursor"])
     assert args.use_sandbox is False
     assert args.provider == "cursor"
     help_text = parser.format_help()
@@ -311,8 +314,8 @@ def test_sandbox_fallback_fails_closed_when_sdk_missing(monkeypatch, capsys):
 
     monkeypatch.setattr("plaibook.cli.openshell_available", lambda: False)
     monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: False)
-    extras = {"review_type": "pr", "review_targets_raw": "org/repo#1"}
-    error = _apply_sandbox_fallback(_args(target="org/repo#1"), extras)
+    extras = {"review_type": "pr", "review_targets_raw": "org/repo/1"}
+    error = _apply_sandbox_fallback(_args(target="org/repo/1"), extras)
     assert error is not None
     assert "require a sandbox" in error
     assert "--no-sandbox" in error
@@ -325,8 +328,8 @@ def test_sandbox_fallback_explicit_no_sandbox_when_sdk_missing(monkeypatch):
 
     monkeypatch.setattr("plaibook.cli.openshell_available", lambda: False)
     monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: False)
-    extras = {"review_type": "pr", "review_targets_raw": "org/repo#1", "use_sandbox": False}
-    error = _apply_sandbox_fallback(_args(target="org/repo#1", use_sandbox=False), extras)
+    extras = {"review_type": "pr", "review_targets_raw": "org/repo/1", "use_sandbox": False}
+    error = _apply_sandbox_fallback(_args(target="org/repo/1", use_sandbox=False), extras)
     assert error is None
     assert extras["use_sandbox"] is False
 
@@ -336,8 +339,8 @@ def test_sandbox_fallback_quiet_when_already_inside_openshell(monkeypatch, capsy
 
     monkeypatch.setattr("plaibook.cli.openshell_available", lambda: False)
     monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: True)
-    extras = {"review_type": "pr", "review_targets_raw": "org/repo#1"}
-    error = _apply_sandbox_fallback(_args(target="org/repo#1"), extras)
+    extras = {"review_type": "pr", "review_targets_raw": "org/repo/1"}
+    error = _apply_sandbox_fallback(_args(target="org/repo/1"), extras)
     assert error is None
     assert extras["use_sandbox"] is False
     assert capsys.readouterr().err == ""
@@ -345,7 +348,7 @@ def test_sandbox_fallback_quiet_when_already_inside_openshell(monkeypatch, capsy
 
 def test_json_extra_vars_keep_colons():
     extras = extra_vars_from_args(
-        _args(target="org/repo#1", review_extra_notes="Note: this is intentional"),
+        _args(target="org/repo/1", review_extra_notes="Note: this is intentional"),
         "idididididididid",
     )
     encoded = json.dumps(extras)
@@ -406,15 +409,35 @@ def test_ansible_playbook_bin_prefers_venv_when_python_is_symlink(tmp_path, monk
     assert Path(ansible_playbook_bin()).resolve() == venv_ap.resolve()
 
 
-def test_find_playbook_root_prefers_env(tmp_path, monkeypatch):
+def test_find_playbook_root_wheel_ignores_stale_plaibook_root(tmp_path):
+    """pip install must use the wheel even if the host exported PLAIBOOK_ROOT."""
+    pkg = tmp_path / "site-packages" / "plaibook"
+    share = pkg / "share"
+    share.mkdir(parents=True)
+    (share / "review.yml").write_text("--- bundled\n")
+    (share / "ansible.cfg").write_text("[defaults]\n")
+    stale = tmp_path / "image-snapshot"
+    stale.mkdir()
+    (stale / "review.yml").write_text("--- stale\n")
+    (stale / "ansible.cfg").write_text("[defaults]\n")
+    found = find_playbook_root(
+        env={"PLAIBOOK_ROOT": str(stale)},
+        package_dir=pkg,
+    )
+    assert found == share.resolve()
+
+
+def test_find_playbook_root_env_is_last_resort_when_install_has_no_playbook(tmp_path):
     checkout = tmp_path / "ansible-plaibook"
     checkout.mkdir()
     (checkout / "review.yml").write_text("---\n")
     (checkout / "ansible.cfg").write_text("[defaults]\n")
-    other = tmp_path / "other"
-    other.mkdir()
-    monkeypatch.chdir(other)
-    found = find_playbook_root(start=other, env={"PLAIBOOK_ROOT": str(checkout)})
+    empty_pkg = tmp_path / "site-packages" / "plaibook"
+    empty_pkg.mkdir(parents=True)
+    found = find_playbook_root(
+        env={"PLAIBOOK_ROOT": str(checkout)},
+        package_dir=empty_pkg,
+    )
     assert found == checkout.resolve()
 
 
@@ -576,6 +599,101 @@ def test_pretty_explains_same_commit_cache_hit():
     assert "$0.00 is expected" in pretty
     assert "Re-run with -f to force" in pretty
     assert "$0.0000" in pretty
+
+
+def test_pretty_explains_ci_preflight_skip_without_full_report():
+    pretty = format_pretty(
+        {
+            "cost_usd": 0,
+            "status": "ok",
+            "targets": [
+                {
+                    "target": "org/repo#2134",
+                    "verdict": "SKIPPED",
+                    "score": 0.0,
+                    "ci_preflight_failed": True,
+                    "skip_reason": (
+                        "CI checks are failing on the PR head commit "
+                        "(b511616974f692cb64113056e5fc22681ad55dd4). "
+                        "Lens agents were not dispatched."
+                    ),
+                    "skip_hint": "Pass `-e review_require_ci_passing=false` to bypass.",
+                    "failing_checks": [
+                        {
+                            "name": "Test Python 3.10 (windows-latest)",
+                            "url": "https://github.com/org/repo/actions/runs/1",
+                        },
+                        {"name": "Test Python 3.14 (ubuntu-latest)"},
+                    ],
+                    "report": (
+                        "## Code Review: org/repo\n\n"
+                        "### Verdict: SKIPPED\n\n"
+                        "full rendered skip report should stay behind --full\n"
+                    ),
+                }
+            ],
+        }
+    )
+    assert pretty.startswith("SKIPPED  org/repo#2134\n")
+    assert "0.0%" not in pretty
+    assert "CI checks are failing on the PR head commit" in pretty
+    assert "b511616974f692cb64113056e5fc22681ad55dd4" in pretty
+    assert "Failing checks:" in pretty
+    assert "Test Python 3.10 (windows-latest)" in pretty
+    assert "Test Python 3.14 (ubuntu-latest)" in pretty
+    assert "review_require_ci_passing=false" in pretty
+    assert "https://github.com/org/repo/actions/runs/1" not in pretty
+    assert "full rendered skip report should stay behind --full" not in pretty
+    full = format_pretty(
+        {
+            "cost_usd": 0,
+            "targets": [
+                {
+                    "target": "org/repo#2134",
+                    "verdict": "SKIPPED",
+                    "ci_preflight_failed": True,
+                    "skip_reason": "CI checks are failing on the PR head commit.",
+                    "report": "full rendered skip report should stay behind --full",
+                }
+            ],
+        },
+        full=True,
+    )
+    assert "full rendered skip report should stay behind --full" in full
+
+
+def test_pretty_skip_falls_back_to_report_when_structured_fields_missing():
+    pretty = format_pretty(
+        {
+            "cost_usd": 0,
+            "targets": [
+                {
+                    "target": "org/repo#1",
+                    "verdict": "SKIPPED",
+                    "score": 0.0,
+                    "ci_preflight_failed": True,
+                    "report": (
+                        "## Code Review: org/repo (github-org-repo-1)\n\n"
+                        "### Verdict: SKIPPED\n\n"
+                        "Review skipped: CI checks are failing on the PR head "
+                        "commit (abc123). Lens agents were not dispatched to "
+                        "avoid model spend on known-broken code. Pass "
+                        "`-e review_require_ci_passing=false` to bypass.\n\n"
+                        "### Failing Checks:\n"
+                        "- **ci/unit-tests** (https://ci.example/1)\n"
+                        "- **ci/lint** (https://ci.example/2)\n"
+                    ),
+                }
+            ],
+        }
+    )
+    assert "Review skipped: CI checks are failing on the PR head commit" in pretty
+    assert "Failing checks:" in pretty
+    assert "ci/unit-tests" in pretty
+    assert "ci/lint" in pretty
+    assert "https://ci.example/1" not in pretty
+    assert "review_require_ci_passing=false" in pretty
+    assert "## Code Review" not in pretty
 
 
 def test_enrich_prefers_run_scoped_summary_over_canonical(tmp_path):
@@ -1056,7 +1174,7 @@ def test_cmd_review_pr_fails_closed_without_openshell(tmp_path, monkeypatch, cap
         lambda *args, **kwargs: called.append(True),
     )
 
-    code = cmd_review(_args(target="org/repo#1", playbook_root=str(checkout)))
+    code = cmd_review(_args(target="org/repo/1", playbook_root=str(checkout)))
     err = capsys.readouterr().err
     assert code == 2
     assert called == []
@@ -1178,7 +1296,7 @@ def test_run_ansible_playbook_times_out(tmp_path, monkeypatch):
 def test_extra_vars_rejects_last_run_id_override():
     try:
         extra_vars_from_args(
-            _args(target="org/repo#1", cli_extra_vars=["last_run_id=attacker"]),
+            _args(target="org/repo/1", cli_extra_vars=["last_run_id=attacker"]),
             "runId0123456789",
         )
     except ValueError as exc:
