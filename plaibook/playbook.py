@@ -8,6 +8,7 @@ import os
 import secrets
 import shutil
 import signal
+import stat
 import string
 import subprocess
 import sys
@@ -26,6 +27,10 @@ RUNTIME_TMP_DIRNAME = "tmp"
 
 class PlaybookNotFoundError(FileNotFoundError):
     """review.yml could not be located from this install."""
+
+
+class ScratchDirError(OSError):
+    """Review scratch under ~/.cache/ansible-plaibook/tmp is not private."""
 
 
 class PlaybookTimeoutError(TimeoutError):
@@ -53,15 +58,45 @@ def last_run_dir(home: Path | None = None) -> Path:
 def runtime_tmp_dir(home: Path | None = None) -> Path:
     """Scratch for clones, checklists, and spinner files — not /tmp.
 
-    macOS XProtect treats newly-executed scripts under /tmp as droppers.
-    Keep plaibook-owned temp under the per-user cache instead.
+    Fail closed unless the directory is owned by this user and mode 0o700.
+    mkdir is umask-filtered; chmod failures and preexisting open modes
+    must not proceed. macOS XProtect treats newly-executed scripts under
+    /tmp as droppers.
     """
     path = last_run_dir(home) / RUNTIME_TMP_DIRNAME
-    path.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise ScratchDirError(
+            f"{path} is a symlink; plaibook will not use it as review scratch. "
+            f"Remove the symlink so {CACHE_DIRNAME} can own this cache."
+        )
+    if path.exists() and not path.is_dir():
+        raise ScratchDirError(
+            f"{path} exists and is not a directory. Remove it so "
+            f"{CACHE_DIRNAME} can own this cache."
+        )
     try:
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(path, 0o700)
-    except OSError:
-        pass
+        info = os.lstat(path)
+    except OSError as exc:
+        raise ScratchDirError(
+            f"Cannot make review scratch private ({path}). "
+            "Fix permissions or remove the directory."
+        ) from exc
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise ScratchDirError(
+            f"{path} must be a real directory owned by this user."
+        )
+    if info.st_uid != os.geteuid():
+        raise ScratchDirError(
+            f"{path} is not owned by this user; plaibook will not write "
+            "review scratch there."
+        )
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        raise ScratchDirError(
+            f"{path} is not private (mode {stat.S_IMODE(info.st_mode):04o}); "
+            "expected owner-only 0700."
+        )
     return path
 
 
