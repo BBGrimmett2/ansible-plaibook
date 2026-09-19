@@ -20,11 +20,13 @@ from plaibook.config import (
 from plaibook.playbook import (
     PlaybookNotFoundError,
     PlaybookTimeoutError,
+    ScratchDirError,
     build_ansible_command,
     find_playbook_root,
     generate_run_id,
     last_run_path,
     run_ansible_playbook,
+    runtime_tmp_dir,
 )
 from plaibook.progress import create_progress_file
 from plaibook.summary import (
@@ -452,7 +454,7 @@ def cmd_review(args: argparse.Namespace) -> int:
             sys.stderr.flush()
             result = run_ansible_playbook(command, playbook_root=root, verbose=True)
         elif spinner_enabled(sys.stderr):
-            progress_dir, progress_path = create_progress_file()
+            progress_dir, progress_path = create_progress_file(directory=str(runtime_tmp_dir()))
             try:
                 with WaitSpinner(
                     _progress_line(args).rstrip("\n"),
@@ -476,7 +478,7 @@ def cmd_review(args: argparse.Namespace) -> int:
                 sys.stderr.write(_progress_line(args))
                 sys.stderr.flush()
             result = run_ansible_playbook(command, playbook_root=root, verbose=False)
-    except (PlaybookTimeoutError, ValueError) as exc:
+    except (PlaybookTimeoutError, ScratchDirError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     captured = "" if inherit_tty else ((result.stderr or "") + (result.stdout or ""))

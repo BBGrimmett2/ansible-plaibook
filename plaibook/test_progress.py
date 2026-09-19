@@ -128,3 +128,38 @@ def test_write_progress_line_only_cli_owned_tempfile(tmp_path, monkeypatch):
         os.chmod(progress_dir, 0o700)
         Path(progress_dir).rmdir()
 
+
+def test_write_progress_line_accepts_cache_scratch(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from plaibook.playbook import runtime_tmp_dir
+    from plaibook.progress import (
+        allowed_progress_path,
+        create_progress_file,
+        write_progress_line,
+    )
+
+    home = tmp_path / "home"
+    home.mkdir()
+    proc_tmp = tmp_path / "proc-tmp"
+    proc_tmp.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("tempfile.tempdir", str(proc_tmp))
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(proc_tmp))
+
+    scratch = runtime_tmp_dir(home)
+    progress_dir, progress_path = create_progress_file(directory=str(scratch))
+    try:
+        assert Path(progress_dir).parent == scratch
+        assert Path(progress_path).read_text(encoding="utf-8") == "setup\n"
+        assert allowed_progress_path(progress_path) is not None
+        assert write_progress_line(progress_path, "lenses") is True
+        assert Path(progress_path).read_text(encoding="utf-8") == "lenses\n"
+        outside = tmp_path / "plaibook-progress-nope.txt"
+        outside.write_text("keep\n", encoding="utf-8")
+        assert write_progress_line(str(outside), "overwrite") is False
+        assert outside.read_text(encoding="utf-8") == "keep\n"
+    finally:
+        Path(progress_path).unlink(missing_ok=True)
+        Path(progress_dir).rmdir()
+

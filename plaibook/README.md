@@ -24,7 +24,10 @@ into `~/.cache/ansible-plaibook/collections`. It never writes
 cannot break install.
 
 Until this version is on PyPI, the same wheel is `pip install .` from
-this checkout (or `pip install git+https://github.com/aknochow/ansible-plaibook.git`).
+this checkout (or clone the repo under `$HOME` and `pip install` that
+path). Do not put the venv in `/tmp`: macOS XProtect blocks scripts
+that land there and then execute. `plai review` uses
+`~/.cache/ansible-plaibook/tmp` for clones and checklists, not `/tmp`.
 Contributors use `uv sync --extra dev` — see
 [CONTRIBUTING](../CONTRIBUTING.md), not the product.
 

@@ -374,7 +374,94 @@ def test_run_ansible_playbook_sets_isolated_collections_path(tmp_path, monkeypat
     )
     env = recorded["env"]
     assert env["ANSIBLE_COLLECTIONS_PATH"].split(os.pathsep)[0] == str(coll)
+    assert env["TMPDIR"] == str(home / ".cache" / "ansible-plaibook" / "tmp")
+    scratch = Path(env["TMPDIR"])
+    assert scratch.is_dir()
+    info = scratch.stat()
+    assert info.st_uid == os.geteuid()
+    assert (info.st_mode & 0o777) == 0o700
     assert Path(env["ANSIBLE_CONFIG"]) == tmp_path / "ansible.cfg"
+
+
+def test_run_ansible_playbook_does_not_keep_slash_tmp(tmp_path, monkeypatch):
+    recorded = {}
+
+    class FakeProc:
+        pid = 1
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return "", ""
+
+    def fake_popen(**kwargs):
+        recorded.update(kwargs)
+        return FakeProc()
+
+    monkeypatch.setattr("plaibook.playbook.subprocess.Popen", fake_popen)
+    monkeypatch.setenv("TMPDIR", "/tmp")
+    (tmp_path / "ansible.cfg").write_text("[defaults]\n")
+    home = tmp_path / "home"
+    run_ansible_playbook(
+        ["ansible-playbook", "review.yml"],
+        playbook_root=tmp_path,
+        verbose=False,
+        home=home,
+    )
+    assert recorded["env"]["TMPDIR"] == str(home / ".cache" / "ansible-plaibook" / "tmp")
+    assert recorded["env"]["TMPDIR"] != "/tmp"
+
+
+def test_runtime_tmp_dir_is_private(tmp_path):
+    import stat
+
+    from plaibook.playbook import runtime_tmp_dir
+
+    home = tmp_path / "home"
+    path = runtime_tmp_dir(home)
+    info = path.stat()
+    assert stat.S_ISDIR(info.st_mode)
+    assert info.st_uid == os.geteuid()
+    assert stat.S_IMODE(info.st_mode) == 0o700
+
+
+def test_runtime_tmp_dir_rejects_symlink(tmp_path):
+    from plaibook.playbook import ScratchDirError, last_run_dir, runtime_tmp_dir
+
+    home = tmp_path / "home"
+    cache = last_run_dir(home)
+    cache.mkdir(parents=True)
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (cache / "tmp").symlink_to(target)
+    with pytest.raises(ScratchDirError, match="symlink"):
+        runtime_tmp_dir(home)
+
+
+def test_runtime_tmp_dir_fails_closed_when_chmod_raises(tmp_path, monkeypatch):
+    from plaibook.playbook import ScratchDirError, runtime_tmp_dir
+
+    home = tmp_path / "home"
+
+    def boom(path, mode):
+        raise OSError("chmod not supported")
+
+    monkeypatch.setattr("os.chmod", boom)
+    with pytest.raises(ScratchDirError, match="private"):
+        runtime_tmp_dir(home)
+
+
+def test_runtime_tmp_dir_fails_closed_when_mode_stays_open(tmp_path, monkeypatch):
+    from plaibook.playbook import ScratchDirError, runtime_tmp_dir
+
+    home = tmp_path / "home"
+    real_chmod = os.chmod
+
+    def leave_open(path, mode):
+        real_chmod(path, 0o755)
+
+    monkeypatch.setattr("os.chmod", leave_open)
+    with pytest.raises(ScratchDirError, match="not private"):
+        runtime_tmp_dir(home)
 
 
 def test_materialize_playbook_share_copies_playbook_tree(tmp_path):

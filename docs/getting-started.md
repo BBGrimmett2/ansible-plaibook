@@ -21,7 +21,10 @@ directory. The wheel vendors `review.yml`. First run installs Galaxy
 collections into `~/.cache/ansible-plaibook/collections` (never
 `~/.ansible`). See [`plaibook/README.md`](../plaibook/README.md).
 Until this version is on PyPI, `pip install .` from this checkout is
-the same wheel. AAP / execution-environment jobs keep calling
+the same wheel. Use a virtualenv under your home directory, not `/tmp`:
+macOS XProtect blocks scripts that appear in `/tmp` and then run.
+`plai review` keeps its own scratch in `~/.cache/ansible-plaibook/tmp`
+for the same reason. AAP / execution-environment jobs keep calling
 `ansible-playbook review.yml` directly.
 
 ## Review a GitHub PR or GitLab MR

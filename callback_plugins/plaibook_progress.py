@@ -45,6 +45,20 @@ except ImportError:  # pragma: no cover - AAP/EE path without the CLI package
     _PROGRESS_SUFFIX = ".txt"
     _PROGRESS_MAX_BYTES = 512
 
+    def _progress_allowed_roots() -> list[str]:
+        roots: list[str] = []
+        cache_tmp = os.path.join(
+            os.path.expanduser("~"), ".cache", "ansible-plaibook", "tmp"
+        )
+        for raw in (tempfile.gettempdir(), cache_tmp):
+            try:
+                real = os.path.realpath(raw)
+            except OSError:
+                continue
+            if real not in roots:
+                roots.append(real)
+        return roots
+
     def allowed_progress_path(path: str) -> str | None:
         raw = (path or "").strip()
         if not raw or "\x00" in raw or not os.path.isabs(raw):
@@ -55,9 +69,16 @@ except ImportError:  # pragma: no cover - AAP/EE path without the CLI package
         if os.sep in name or (os.altsep and os.altsep in name):
             return None
         try:
-            real_tmp = os.path.realpath(tempfile.gettempdir())
             real_parent = os.path.realpath(os.path.dirname(raw))
-            if os.path.commonpath([real_tmp, real_parent]) != real_tmp:
+            under_root = False
+            for root in _progress_allowed_roots():
+                try:
+                    if os.path.commonpath([root, real_parent]) == root:
+                        under_root = True
+                        break
+                except ValueError:
+                    continue
+            if not under_root:
                 return None
             parent_stat = os.stat(real_parent)
         except (OSError, ValueError):
@@ -107,10 +128,11 @@ DOCUMENTATION = """
     short_description: Write coarse review stages for the plaibook spinner.
     description:
       - When PLAIBOOK_PROGRESS_FILE names a CLI-owned regular file under
-        the process temp directory (prefix plaibook-progress-), writes a
-        one-line stage name each time the review moves to a new main
-        stage. Other values are ignored. Checkout includes
-        review_clone_url / the git module repo when that fact is set.
+        the process temp directory or ~/.cache/ansible-plaibook/tmp
+        (prefix plaibook-progress-), writes a one-line stage name each
+        time the review moves to a new main stage. Other values are
+        ignored. Checkout includes review_clone_url / the git module
+        repo when that fact is set.
     requirements: []
 """
 
