@@ -471,7 +471,10 @@ review_verify_claude_cli_max_turns: "{{ lookup('ansible.builtin.env', 'ANSIBLE_R
 # output at a non-trivial, probabilistic rate: a different malformed
 # shape each attempt, not a deterministic bug tied to one input.
 # Without a retry here, a malformed response fails the entire review
-# immediately.
+# immediately. Cursor Security/Review use the same budget when a named
+# *_lens subagent finishes without a nested report_findings execute
+# (dispatch_lens_cursor.yml); a miss is an invalid attempt, not a play
+# abort, so a bound sibling and its usage are kept.
 #
 # 3 (1 initial attempt + 2 retries): retries cost real tokens (a fresh
 # dispatch of the exact same call, not a free HTTP poll), and the

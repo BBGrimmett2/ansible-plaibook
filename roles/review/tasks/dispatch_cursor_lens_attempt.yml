@@ -1,0 +1,68 @@
+---
+# One Cursor Security/Review dispatch attempt (first try or retry).
+# Missing nested execute is an invalid attempt; the caller loops with
+# review_structured_output_max_attempts. Record usage before consume
+# so a miss does not zero cost or discard a sibling lens that already
+# bound. Parent last-call never counts as a bind. Do not print .text.
+#
+# Vars: cursor_lens_agent_id, cursor_lens_description, cursor_lens_prompt,
+# cursor_lens_schema, cursor_lens_tool_description, cursor_nonce_lens_label,
+# cursor_lens_valid_var, cursor_lens_args_var, cursor_lens_fail_var,
+# cursor_lens_raw_var, cursor_lens_stats_name, cursor_lens_attempt_number
+
+- name: "Cursor: dispatch {{ cursor_nonce_lens_label }} attempt {{ cursor_lens_attempt_number }} of {{ review_structured_output_max_attempts }}"
+  when: not (lookup('vars', cursor_lens_valid_var) | default(false) | bool)
+  block:
+    - name: "Cursor: show {{ cursor_nonce_lens_label }} attempt {{ cursor_lens_attempt_number }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ cursor_nonce_lens_label }} attempt
+          {{ cursor_lens_attempt_number }} of
+          {{ review_structured_output_max_attempts }}
+          (agent_family=cursor)
+
+    - name: "Cursor: dispatch the {{ cursor_nonce_lens_label }} agent"
+      aknochow.cursor.agent:
+        api_key: "{{ review_cursor_api_key }}"
+        prompt: >-
+          Spawn the {{ cursor_lens_agent_id }} subagent with the Task / Subagent tool.
+          You must call the Task / Subagent tool -- {{ cursor_lens_agent_id }} is not
+          itself a tool. Do not call report_findings yourself. Wait for
+          {{ cursor_lens_agent_id }} to finish.
+        model: "{{ review_cursor_model }}"
+        effort: "{{ review_cursor_effort }}"
+        cwd: "{{ review_repo_path }}"
+        setting_sources: []
+        tools: [mcp, task]
+        agents: "{{ { cursor_lens_agent_id: {'description': cursor_lens_description, 'prompt': cursor_lens_prompt} } }}"
+        structured_tool:
+          name: report_findings
+          description: "{{ cursor_lens_tool_description }}"
+          input_schema: "{{ cursor_lens_schema }}"
+      register: _cursor_lens_attempt_raw
+
+    # Record billed usage before named-lens consume. A miss used to abort
+    # the play here, which skipped lenses.yml's pipeline_agent_calls write
+    # and zeroed last_run cost even when a sibling lens had already bound.
+    - name: "Cursor: remember {{ cursor_nonce_lens_label }} raw result and usage"
+      ansible.builtin.set_fact:
+        "{{ cursor_lens_raw_var }}": "{{ _cursor_lens_attempt_raw }}"
+        pipeline_agent_calls: >-
+          {{ (pipeline_agent_calls | default([])) + [{
+               'target': review_org_repo + '#' + review_number,
+               'lens': cursor_lens_stats_name,
+               'model': _cursor_lens_attempt_raw.resolved_model | default(review_cursor_model),
+               'usage': _cursor_lens_attempt_raw.usage_normalized | default({}),
+               'attempt': cursor_lens_attempt_number | int
+             }] }}
+
+    - name: "Cursor: bind {{ cursor_nonce_lens_label }} named-lens execute"
+      ansible.builtin.include_tasks: bind_cursor_named_lens.yml
+      vars:
+        cursor_raw: "{{ _cursor_lens_attempt_raw }}"
+        cursor_lens_tool: report_findings
+  rescue:
+    - name: "Cursor: mark {{ cursor_nonce_lens_label }} attempt failed"
+      ansible.builtin.set_fact:
+        "{{ cursor_lens_valid_var }}": false
+        "{{ cursor_lens_fail_var }}": "{{ ansible_failed_result.msg | default('named lens dispatch failed') }}"

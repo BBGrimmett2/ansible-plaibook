@@ -7,9 +7,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
+export ANSIBLE_CONFIG="${REPO_ROOT}/ansible.cfg"
 
 PLAYBOOKS=(
   "tests/test_checklist_execution.yml"
+  "tests/test_cursor_named_lens_retry.yml"
   "tests/test_cursor_prompt_nonce.yml"
   "tests/test_guardian_not_installed.yml"
   "tests/test_guardian_scan.yml"

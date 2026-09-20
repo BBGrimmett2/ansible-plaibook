@@ -1,0 +1,282 @@
+---
+# Deterministic tests for Cursor Security/Review named-lens bind retries.
+# No live model. Covers the #58 control-flow gap:
+#   (1) nested execute → bind succeeds
+#   (2) no execute → invalid attempt, play continues
+#   (3) parent-only execute → invalid attempt (never counts as a review)
+#   (4) miss then nested → retry binds
+#   (5) Security bound + Review miss → sibling args kept, play continues
+#   (6) nonce mismatch → invalid attempt, no .text in fail_msg
+#
+# Usage:
+#   ansible-playbook tests/test_cursor_named_lens_retry.yml
+
+- name: "Cursor named-lens bind retries: miss is invalid attempt, sibling kept"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    review_prompt_nonce: "AbCdEfGh12345678"
+    _nested_lens_args:
+      findings:
+        - lens: Security
+          file: lens.py
+          line: 10
+          severity: Major
+          description: from named lens
+          evidence: planted
+          confidence: HIGH
+          fix: don't
+      scores: { security: 10 }
+      prompt_nonce: "AbCdEfGh12345678"
+    _parent_fabricated_args:
+      findings: []
+      scores: { security: 99 }
+      prompt_nonce: "AbCdEfGh12345678"
+      text: "SECRET_DRAFT_MUST_NOT_APPEAR"
+    _review_nested_args:
+      findings: []
+      scores: { quality: 80 }
+      prompt_nonce: "AbCdEfGh12345678"
+
+  tasks:
+    - name: Nested execute must bind
+      block:
+        - name: Reset Security bind flags
+          ansible.builtin.set_fact:
+            security_cursor_lens_valid: false
+
+        - name: Bind a nested Security execute
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: bind_cursor_named_lens
+          vars:
+            cursor_raw:
+              structured: "{{ _parent_fabricated_args }}"
+              structured_tool_calls:
+                - name: report_findings
+                  caller: nested
+                  agent_id:
+                  args: "{{ _nested_lens_args }}"
+                - name: report_findings
+                  caller: parent
+                  agent_id: parent-1
+                  args: "{{ _parent_fabricated_args }}"
+            cursor_nonce_lens_label: "Security lens"
+            cursor_lens_tool: report_findings
+            cursor_lens_valid_var: security_cursor_lens_valid
+            cursor_lens_args_var: _cursor_security_lens
+            cursor_lens_fail_var: security_cursor_lens_last_fail
+
+        - name: Confirm nested execute bound and ignored parent last-call
+          ansible.builtin.assert:
+            that:
+              - security_cursor_lens_valid | bool
+              - _cursor_security_lens.findings[0].file == "lens.py"
+              - _cursor_security_lens.scores.security == 10
+            fail_msg: "Nested execute must bind; parent last-call must be ignored."
+            success_msg: "Nested execute bound; persist used named-lens args."
+
+    - name: No execute must be an invalid attempt, not a play abort
+      block:
+        - name: Reset Review bind flags
+          ansible.builtin.set_fact:
+            review_cursor_lens_valid: false
+
+        - name: Bind when structured_tool_calls is empty
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: bind_cursor_named_lens
+          vars:
+            cursor_raw:
+              structured_tool_calls: []
+            cursor_nonce_lens_label: "Review lens"
+            cursor_lens_tool: report_findings
+            cursor_lens_valid_var: review_cursor_lens_valid
+            cursor_lens_args_var: _cursor_review_lens
+            cursor_lens_fail_var: review_cursor_lens_last_fail
+
+        - name: Confirm a miss did not abort and did not bind
+          ansible.builtin.assert:
+            that:
+              - not (review_cursor_lens_valid | bool)
+              - "'no nested' in (review_cursor_lens_last_fail | default('') | lower) or 'never called' in (review_cursor_lens_last_fail | default('') | lower)"
+              - "'.text' not in (review_cursor_lens_last_fail | default(''))"
+              - "'SECRET_DRAFT_MUST_NOT_APPEAR' not in (review_cursor_lens_last_fail | default(''))"
+              - "'HMAC' not in (review_cursor_lens_last_fail | default(''))"
+            fail_msg: >-
+              Expected an invalid attempt without aborting, .text, or HMAC.
+              Got valid={{ review_cursor_lens_valid | default('') }}
+              fail={{ review_cursor_lens_last_fail | default('') }}
+            success_msg: "No execute is an invalid attempt; play continued."
+
+    - name: Parent-only execute must be an invalid attempt, never a review
+      block:
+        - name: Reset parent-only bind flags
+          ansible.builtin.set_fact:
+            review_cursor_lens_valid: false
+
+        - name: Bind when only the parent called the tool
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: bind_cursor_named_lens
+          vars:
+            cursor_raw:
+              structured: "{{ _parent_fabricated_args }}"
+              structured_tool_calls:
+                - name: report_findings
+                  caller: parent
+                  agent_id: parent-1
+                  args: "{{ _parent_fabricated_args }}"
+            cursor_nonce_lens_label: "Review lens"
+            cursor_lens_tool: report_findings
+            cursor_lens_valid_var: review_cursor_lens_valid
+            cursor_lens_args_var: _cursor_review_lens
+            cursor_lens_fail_var: review_cursor_lens_last_fail
+
+        - name: Confirm parent-only did not bind and printed no draft
+          ansible.builtin.assert:
+            that:
+              - not (review_cursor_lens_valid | bool)
+              - "'parent' in (review_cursor_lens_last_fail | default('') | lower)"
+              - "'.text' not in (review_cursor_lens_last_fail | default(''))"
+              - "'SECRET_DRAFT_MUST_NOT_APPEAR' not in (review_cursor_lens_last_fail | default(''))"
+              - "'HMAC' not in (review_cursor_lens_last_fail | default(''))"
+            fail_msg: >-
+              Parent-only must be an invalid attempt without .text or payload.
+              Got: {{ review_cursor_lens_last_fail | default('') }}
+            success_msg: "Parent-only execute is an invalid attempt, not a review."
+
+    - name: A miss then a nested execute must bind on retry
+      block:
+        - name: Reset retry bind flags
+          ansible.builtin.set_fact:
+            review_cursor_lens_valid: false
+
+        - name: "Attempt 1: no nested execute"
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: bind_cursor_named_lens
+          vars:
+            cursor_raw:
+              structured_tool_calls: []
+            cursor_nonce_lens_label: "Review lens"
+            cursor_lens_tool: report_findings
+            cursor_lens_valid_var: review_cursor_lens_valid
+            cursor_lens_args_var: _cursor_review_lens
+            cursor_lens_fail_var: review_cursor_lens_last_fail
+
+        - name: "Attempt 2: nested execute"
+          when: not (review_cursor_lens_valid | bool)
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: bind_cursor_named_lens
+          vars:
+            cursor_raw:
+              structured_tool_calls:
+                - name: report_findings
+                  caller: nested
+                  agent_id:
+                  args: "{{ _review_nested_args }}"
+            cursor_nonce_lens_label: "Review lens"
+            cursor_lens_tool: report_findings
+            cursor_lens_valid_var: review_cursor_lens_valid
+            cursor_lens_args_var: _cursor_review_lens
+            cursor_lens_fail_var: review_cursor_lens_last_fail
+
+        - name: Confirm retry bound the nested execute
+          ansible.builtin.assert:
+            that:
+              - review_cursor_lens_valid | bool
+              - _cursor_review_lens.scores.quality == 80
+            fail_msg: "Retry after a miss must bind the nested execute."
+            success_msg: "Miss then nested execute bound on retry."
+
+    - name: Security bind must survive a Review miss
+      block:
+        - name: Reset sibling bind flags
+          ansible.builtin.set_fact:
+            security_cursor_lens_valid: false
+            review_cursor_lens_valid: false
+            _cursor_security_lens: {}
+            _cursor_review_lens: {}
+
+        - name: Bind Security nested execute
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: bind_cursor_named_lens
+          vars:
+            cursor_raw:
+              structured_tool_calls:
+                - name: report_findings
+                  caller: nested
+                  agent_id:
+                  args: "{{ _nested_lens_args }}"
+            cursor_nonce_lens_label: "Security lens"
+            cursor_lens_tool: report_findings
+            cursor_lens_valid_var: security_cursor_lens_valid
+            cursor_lens_args_var: _cursor_security_lens
+            cursor_lens_fail_var: security_cursor_lens_last_fail
+
+        - name: Bind Review with no execute
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: bind_cursor_named_lens
+          vars:
+            cursor_raw:
+              structured_tool_calls: []
+            cursor_nonce_lens_label: "Review lens"
+            cursor_lens_tool: report_findings
+            cursor_lens_valid_var: review_cursor_lens_valid
+            cursor_lens_args_var: _cursor_review_lens
+            cursor_lens_fail_var: review_cursor_lens_last_fail
+
+        - name: Confirm Security sibling is still bound after Review miss
+          ansible.builtin.assert:
+            that:
+              - security_cursor_lens_valid | bool
+              - _cursor_security_lens.findings[0].file == "lens.py"
+              - not (review_cursor_lens_valid | bool)
+            fail_msg: "A Review miss must not throw away a bound Security sibling."
+            success_msg: "Security sibling kept after Review miss."
+
+    - name: Nonce mismatch must be an invalid attempt without printing .text
+      block:
+        - name: Reset nonce-mismatch bind flags
+          ansible.builtin.set_fact:
+            security_cursor_lens_valid: false
+
+        - name: Bind nested args with the wrong nonce
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: bind_cursor_named_lens
+          vars:
+            cursor_raw:
+              structured_tool_calls:
+                - name: report_findings
+                  caller: nested
+                  agent_id:
+                  args:
+                    findings: []
+                    scores: { security: 10 }
+                    prompt_nonce: "definitelyNotTheNonce"
+                    text: "SECRET_DRAFT_MUST_NOT_APPEAR"
+            cursor_nonce_lens_label: "Security lens"
+            cursor_lens_tool: report_findings
+            cursor_lens_valid_var: security_cursor_lens_valid
+            cursor_lens_args_var: _cursor_security_lens
+            cursor_lens_fail_var: security_cursor_lens_last_fail
+
+        - name: Confirm nonce mismatch did not bind and printed no draft
+          ansible.builtin.assert:
+            that:
+              - not (security_cursor_lens_valid | bool)
+              - "'fabricat' in (security_cursor_lens_last_fail | default('') | lower)"
+              - "'.text' not in (security_cursor_lens_last_fail | default(''))"
+              - "'SECRET_DRAFT_MUST_NOT_APPEAR' not in (security_cursor_lens_last_fail | default(''))"
+              - "'HMAC' not in (security_cursor_lens_last_fail | default(''))"
+            fail_msg: >-
+              Expected a fabrication-named invalid attempt without .text.
+              Got: {{ security_cursor_lens_last_fail | default('') }}
+            success_msg: "Nonce mismatch is an invalid attempt, without printing .text."
