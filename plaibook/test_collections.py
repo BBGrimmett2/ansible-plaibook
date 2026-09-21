@@ -23,6 +23,34 @@ from plaibook.collections import (
 from plaibook.playbook import run_ansible_playbook
 
 
+def _plant(dest, *keys):
+    for ns, name in keys:
+        coll = dest / "ansible_collections" / ns / name
+        coll.mkdir(parents=True, exist_ok=True)
+        (coll / "MANIFEST.json").write_text("{}\n")
+
+
+def _install_spies(monkeypatch, calls=None):
+    """GitHub-first install without ansible-galaxy -r or the Galaxy API."""
+    recorded = calls if calls is not None else []
+
+    def fake_git(galaxy, dest, cols, env):
+        recorded.append(("git", list(cols), dict(env)))
+        for col in cols:
+            key = collection_key_from_requirement(col)
+            if key:
+                _plant(dest, key)
+
+    def fake_mirrors(galaxy, dest, env, needed=None):
+        recorded.append(("mirrors", list(needed or []), dict(env)))
+        if needed:
+            _plant(dest, *needed)
+
+    monkeypatch.setattr("plaibook.collections.install_git_sources", fake_git)
+    monkeypatch.setattr("plaibook.collections.install_galaxy_github_mirrors", fake_mirrors)
+    return recorded
+
+
 def test_ensure_collections_noop_without_requirements(tmp_path):
     playbook = tmp_path / "playbook"
     playbook.mkdir()
@@ -37,35 +65,24 @@ def test_ensure_collections_installs_into_isolated_cache(tmp_path, monkeypatch):
     (playbook / "collections-requirements.yml").write_text("collections: []\n")
     home = tmp_path / "home"
     home.mkdir()
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append((list(cmd), kwargs))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    recorded = _install_spies(monkeypatch)
     dest = ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
     assert dest == home / ".cache" / "ansible-plaibook" / "collections"
     assert dest.is_dir()
-    assert calls, "expected ansible-galaxy on first run"
-    cmd, kwargs = calls[0]
-    assert cmd[:3] == ["ansible-galaxy", "collection", "install"]
-    assert cmd[cmd.index("-p") + 1] == str(dest)
     assert ".ansible" not in str(dest)
-    assert "--force" in cmd
-    env = kwargs["env"]
+    assert recorded, "expected GitHub-first install on first run"
+    env = recorded[0][2]
     assert env["GIT_CONFIG_KEY_0"] == "advice.detachedHead"
     assert env["GIT_CONFIG_VALUE_0"] == "false"
     assert env["GIT_TERMINAL_PROMPT"] == "0"
-    assert kwargs["capture_output"] is True
     stamp = dest / ".requirements.sha256"
     assert stamp.is_file()
     assert "ANSIBLE_COLLECTIONS_PATHS" not in env
 
-    calls.clear()
+    recorded.clear()
     again = ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
     assert again == dest
-    assert calls == []
+    assert recorded == []
 
 
 def test_ensure_collections_drops_legacy_paths_from_galaxy_env(tmp_path, monkeypatch):
@@ -74,13 +91,7 @@ def test_ensure_collections_drops_legacy_paths_from_galaxy_env(tmp_path, monkeyp
     (playbook / "collections-requirements.yml").write_text("collections: []\n")
     home = tmp_path / "home"
     home.mkdir()
-    recorded = []
-
-    def fake_run(cmd, **kwargs):
-        recorded.append(kwargs["env"])
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    recorded = _install_spies(monkeypatch)
     monkeypatch.setenv("ANSIBLE_COLLECTIONS_PATHS", "/opt/legacy")
     ensure_collections(
         playbook,
@@ -89,7 +100,7 @@ def test_ensure_collections_drops_legacy_paths_from_galaxy_env(tmp_path, monkeyp
         env={"ANSIBLE_COLLECTIONS_PATHS": "/from-caller"},
     )
     assert recorded
-    galaxy_env = recorded[0]
+    galaxy_env = recorded[0][2]
     assert "ANSIBLE_COLLECTIONS_PATHS" not in galaxy_env
     assert galaxy_env["ANSIBLE_COLLECTIONS_PATH"].split(os.pathsep)[0] == str(collections_dir(home))
 
@@ -103,13 +114,7 @@ def test_ensure_collections_reinstalls_when_requirements_change(tmp_path, monkey
     dest = collections_dir(home)
     dest.mkdir(parents=True)
     (dest / ".requirements.sha256").write_text("not-the-digest\n")
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(list(cmd))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    recorded = _install_spies(monkeypatch)
     err = []
 
     class Err:
@@ -120,7 +125,7 @@ def test_ensure_collections_reinstalls_when_requirements_change(tmp_path, monkey
             pass
 
     ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy", stderr=Err())
-    assert calls
+    assert recorded
     assert "Updating" in "".join(err)
 
 
@@ -134,13 +139,7 @@ def test_ensure_collections_reinstalls_when_stamp_tree_missing(tmp_path, monkeyp
     dest.mkdir(parents=True)
     digest = hashlib.sha256(req.read_bytes()).hexdigest()
     (dest / ".requirements.sha256").write_text(digest + "\n")
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(list(cmd))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    recorded = _install_spies(monkeypatch)
     err = []
 
     class Err:
@@ -151,7 +150,7 @@ def test_ensure_collections_reinstalls_when_stamp_tree_missing(tmp_path, monkeyp
             pass
 
     ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy", stderr=Err())
-    assert calls
+    assert recorded
     assert "cache incomplete" in "".join(err)
 
 
@@ -168,15 +167,9 @@ def test_ensure_collections_reinstalls_when_a_required_collection_is_missing(tmp
     one = dest / "ansible_collections" / "ansible" / "posix"
     one.mkdir(parents=True)
     (one / "MANIFEST.json").write_text("{}\n")
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(list(cmd))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    recorded = _install_spies(monkeypatch)
     ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
-    assert calls
+    assert recorded
 
 
 def test_ensure_collections_skips_when_all_required_collections_are_present(tmp_path, monkeypatch):
@@ -220,15 +213,9 @@ def test_ensure_collections_reinstalls_when_a_dependency_masks_a_required_name(t
         coll = dest / "ansible_collections" / ns / name
         coll.mkdir(parents=True)
         (coll / "MANIFEST.json").write_text("{}\n")
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(list(cmd))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    recorded = _install_spies(monkeypatch)
     ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
-    assert calls
+    assert recorded
 
 
 def test_requirement_collection_keys_maps_git_urls_and_fqcns(tmp_path):
@@ -310,25 +297,31 @@ def test_ensure_collections_missing_galaxy_bin_is_collection_error(tmp_path, mon
         ensure_collections(playbook, home=home)
 
 
-def test_ensure_collections_surfaces_galaxy_failure(tmp_path, monkeypatch):
-    playbook = tmp_path / "playbook"
-    playbook.mkdir()
-    (playbook / "collections-requirements.yml").write_text("collections: []\n")
-    home = tmp_path / "home"
-
-    def fake_run(cmd, **kwargs):
-        return SimpleNamespace(returncode=1, stdout="", stderr="rmtree on a symbolic link")
-
-    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
-    with pytest.raises(CollectionInstallError, match="rmtree"):
-        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
-
-
-def test_ensure_collections_falls_back_to_github_when_galaxy_tls_fails(tmp_path, monkeypatch):
+def test_ensure_collections_surfaces_github_install_failure(tmp_path, monkeypatch):
     playbook = tmp_path / "playbook"
     playbook.mkdir()
     (playbook / "collections-requirements.yml").write_text(
-        "collections:\n  - name: community.general\n"
+        "collections:\n  - name: https://github.com/example/ansible-posix.git\n    type: git\n"
+    )
+    home = tmp_path / "home"
+
+    def fake_git(*args, **kwargs):
+        raise CollectionInstallError("git fetch failed for example/ansible-posix")
+
+    monkeypatch.setattr("plaibook.collections.install_git_sources", fake_git)
+    monkeypatch.setattr("plaibook.collections.install_galaxy_github_mirrors", lambda *a, **k: None)
+    with pytest.raises(CollectionInstallError, match="git fetch failed"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+
+
+def test_ensure_collections_installs_from_github_never_galaxy_api(tmp_path, monkeypatch):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text(
+        "collections:\n"
+        "  - name: https://github.com/ansible-collections/community.general.git\n"
+        "    type: git\n"
+        "    version: '13.4.0'\n"
     )
     home = tmp_path / "home"
     err = []
@@ -340,35 +333,51 @@ def test_ensure_collections_falls_back_to_github_when_galaxy_tls_fails(tmp_path,
         def flush(self):
             pass
 
-    def fake_run(cmd, **kwargs):
-        return SimpleNamespace(
-            returncode=1,
-            stdout="",
-            stderr="ERROR! Unknown error when attempting to call Galaxy at "
-            "'https://galaxy.ansible.com/api/': [ASN1: NOT_ENOUGH_DATA]",
-        )
+    def boom_run(cmd, **kwargs):
+        joined = " ".join(str(part) for part in cmd)
+        raise AssertionError(f"first-run install must not call Galaxy or git here: {joined}")
 
-    def fake_git(galaxy, dest, cols, env):
-        coll = dest / "ansible_collections" / "community" / "general"
-        coll.mkdir(parents=True)
-        (coll / "MANIFEST.json").write_text("{}\n")
-
-    def fake_mirrors(galaxy, dest, env, needed=None):
-        coll = dest / "ansible_collections" / "community" / "library_inventory_filtering_v1"
-        coll.mkdir(parents=True)
-        (coll / "MANIFEST.json").write_text("{}\n")
-
-    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
-    monkeypatch.setattr("plaibook.collections.install_git_sources", fake_git)
-    monkeypatch.setattr("plaibook.collections.install_galaxy_github_mirrors", fake_mirrors)
-    dest = ensure_collections(
-        playbook, home=home, galaxy_bin="ansible-galaxy", stderr=Err()
-    )
+    recorded = _install_spies(monkeypatch)
+    monkeypatch.setattr("plaibook.collections.subprocess.run", boom_run)
+    dest = ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy", stderr=Err())
     assert dest == collections_dir(home)
-    assert "GitHub" in "".join(err)
+    log = "".join(err)
+    assert "GitHub" in log
+    assert "galaxy.ansible.com" in log
+    assert "Galaxy install failed" not in log
+    assert any(kind == "git" for kind, *_ in recorded)
     assert collection_is_installed(dest, "community", "general")
     assert collection_is_installed(dest, "community", "library_inventory_filtering_v1")
     assert (dest / ".requirements.sha256").is_file()
+
+
+def test_ensure_collections_installs_git_sources_with_no_deps(tmp_path, monkeypatch):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text(
+        "collections:\n  - name: https://github.com/example/ansible-posix.git\n    type: git\n    version: HEAD\n"
+    )
+    home = tmp_path / "home"
+    calls = []
+
+    def fake_clone(url, ref, dest):
+        dest.mkdir(parents=True, exist_ok=True)
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        assert "-r" not in cmd
+        dest = Path(cmd[cmd.index("-p") + 1])
+        _plant(dest, ("example", "posix"))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("plaibook.collections._clone_at_ref", fake_clone)
+    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    dest = ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    assert dest == collections_dir(home)
+    assert calls
+    assert all(c[:3] == ["ansible-galaxy", "collection", "install"] for c in calls)
+    assert all("--no-deps" in c for c in calls)
+    assert collection_is_installed(dest, "example", "posix")
 
 
 def test_merge_collections_path_puts_cache_first(tmp_path):
@@ -550,6 +559,8 @@ def test_ensure_collections_holds_flock_during_galaxy(tmp_path, monkeypatch):
     import subprocess
     import sys
 
+    import plaibook.collections as coll
+
     playbook = tmp_path / "playbook"
     playbook.mkdir()
     (playbook / "collections-requirements.yml").write_text("collections: []\n")
@@ -583,7 +594,16 @@ def test_ensure_collections_holds_flock_during_galaxy(tmp_path, monkeypatch):
         probe_codes.append(probe.returncode)
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    def fake_git(galaxy, dest, cols, env):
+        coll.subprocess.run(
+            [galaxy, "collection", "install", "-p", str(dest), "--force", "--no-deps"],
+            env=env,
+            capture_output=True,
+        )
+
+    monkeypatch.setattr(coll, "install_git_sources", fake_git)
+    monkeypatch.setattr(coll, "install_galaxy_github_mirrors", lambda *a, **k: None)
+    monkeypatch.setattr(coll.subprocess, "run", fake_run)
     dest = ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
     assert dest == collections_dir(home)
     assert probe_codes == [2], "a sibling process must not take LOCK_EX while galaxy runs"
@@ -598,12 +618,30 @@ def _ensure_collections_worker(playbook: str, home: str, galaxy: str, result_pat
 
 def test_ensure_collections_serializes_two_processes(tmp_path):
     import multiprocessing
+    import subprocess
     import sys
     import time
 
+    src = tmp_path / "example" / "ansible-posix"
+    src.mkdir(parents=True)
+    (src / "galaxy.yml").write_text(
+        "namespace: example\nname: posix\nversion: 1.0.0\nreadme: README.md\nauthors: [test]\n"
+    )
+    (src / "README.md").write_text("test\n")
+    subprocess.run(["git", "init", "-b", "main"], cwd=src, check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=src, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+        cwd=src,
+        check=True,
+        capture_output=True,
+    )
+
     playbook = tmp_path / "playbook"
     playbook.mkdir()
-    (playbook / "collections-requirements.yml").write_text("collections: []\n")
+    (playbook / "collections-requirements.yml").write_text(
+        f"collections:\n  - name: {src}\n    type: git\n    version: HEAD\n"
+    )
     home = tmp_path / "home"
     home.mkdir()
     log = tmp_path / "galaxy.log"
@@ -614,12 +652,17 @@ def test_ensure_collections_serializes_two_processes(tmp_path):
         "import pathlib, sys, time\n"
         f"log = pathlib.Path({str(log)!r})\n"
         f"release = pathlib.Path({str(release)!r})\n"
+        "args = sys.argv\n"
+        "dest = pathlib.Path(args[args.index('-p') + 1])\n"
+        "coll = dest / 'ansible_collections' / 'example' / 'posix'\n"
         "with log.open('a') as fh:\n"
         "    fh.write('start\\n')\n"
         "    fh.flush()\n"
         "deadline = time.time() + 10\n"
         "while time.time() < deadline and not release.exists():\n"
         "    time.sleep(0.05)\n"
+        "coll.mkdir(parents=True, exist_ok=True)\n"
+        "(coll / 'MANIFEST.json').write_text('{}\\n')\n"
         "with log.open('a') as fh:\n"
         "    fh.write('end\\n')\n"
         "sys.exit(0)\n"

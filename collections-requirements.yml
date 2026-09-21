@@ -31,10 +31,9 @@ collections:
     # main can silently change module arguments. SHA is ansible-cursor
     # cursor/fix-named-lens-stream-edab (WaitLiveRun / subagent tools).
     version: 7b487fd7571b1f17e160072bb4834d890d896591
-  # GitHub clones, not Galaxy FQCNs. ansible-galaxy -r still resolves
-  # galaxy.yml deps against galaxy.ansible.com; first-run install falls
-  # back to --no-deps git mirrors when that TLS call fails (common on
-  # corporate Macs: Python OpenSSL vs git's OS trust store).
+  # GitHub clones, not Galaxy FQCNs. First-run install uses git +
+  # ansible-galaxy install --no-deps and never calls galaxy.ansible.com
+  # (Python OpenSSL vs git's OS trust store on corporate Macs).
   - name: https://github.com/ansible-collections/community.general.git
     type: git
     version: "13.4.0"

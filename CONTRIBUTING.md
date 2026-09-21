@@ -8,10 +8,11 @@ This repository uses `uv` for reproducible environment management with a pinned 
 ```bash
 uv sync --extra dev
 # uv sync installs both console scripts: plaibook and plai (same main)
-# First `plai review` installs collections into
-# ~/.cache/ansible-plaibook/collections (never ~/.ansible).
-# Playbook tests still need:
-uv run ansible-galaxy collection install -r collections-requirements.yml
+# First `plai review` installs collections from GitHub into
+# ~/.cache/ansible-plaibook/collections (never ~/.ansible, never
+# galaxy.ansible.com).
+# Playbook tests still need collections on the isolated path:
+uv run python scripts/ci-install-collections.py
 ```
 
 If the project's `.venv` is not on PATH, invoke the CLI as
@@ -30,9 +31,10 @@ uv run ansible-playbook review.yml --syntax-check  # Playbook syntax check
 
 ## Collection pins
 
-`collections-requirements.yml` mixes Galaxy collections, floating git
-`version: main` entries, and SHA pins for provider collections whose
-module interface this repo calls (`aknochow.cursor`, `aknochow.openai`).
+`collections-requirements.yml` is git sources (and GitHub mirrors for
+Galaxy FQCNs), floating `version: main` entries, and SHA pins for
+provider collections whose module interface this repo calls
+(`aknochow.cursor`, `aknochow.openai`).
 Dependabot cannot update that file. After a sibling collection merge,
 either bump the SHA by hand or run:
 

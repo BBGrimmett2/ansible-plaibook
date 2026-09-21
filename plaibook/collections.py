@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Install Galaxy collections into a plaibook-owned cache, never ~/.ansible."""
+"""Install collections into a plaibook-owned cache, never ~/.ansible."""
 
 from __future__ import annotations
 
@@ -31,11 +31,11 @@ ENV_COLLECTIONS = "ANSIBLE_COLLECTIONS_PATH"
 ENV_COLLECTIONS_LEGACY = "ANSIBLE_COLLECTIONS_PATHS"
 GALAXY_TIMEOUT_SECONDS = 600
 
-# Unpinned Galaxy FQCNs (and community.general's declared dep). Tags
-# match scripts/ci-install-collections.py. First-run `ansible-galaxy -r`
-# talks to galaxy.ansible.com over Python's OpenSSL; git clones use the
-# OS trust store. Corporate Macs often fail the former (ASN1 /
-# NOT_ENOUGH_DATA) after git collections already succeeded.
+# GitHub mirrors for FQCN rows and for galaxy.yml deps (community.general
+# pulls community.library_inventory_filtering_v1). First-run install
+# clones these with git (OS trust store) and ``ansible-galaxy install
+# --no-deps``. It never calls galaxy.ansible.com — Python's OpenSSL on
+# corporate Macs fails that API with ASN1 / NOT_ENOUGH_DATA.
 GALAXY_GITHUB_MIRRORS: dict[str, tuple[str, str]] = {
     "ansible.posix": (
         "https://github.com/ansible-collections/ansible.posix.git",
@@ -57,7 +57,7 @@ GALAXY_GITHUB_MIRRORS: dict[str, tuple[str, str]] = {
 
 
 class CollectionInstallError(RuntimeError):
-    """ansible-galaxy could not install collections-requirements.yml."""
+    """Could not install collections-requirements.yml from GitHub."""
 
 
 def ansible_galaxy_bin() -> str:
@@ -381,80 +381,44 @@ def ensure_collections(
                 stderr.write("Updating Ansible collections (pin change)…\n")
             else:
                 stderr.write(
-                    "Installing Ansible collections (first run, into "
-                    f"~/.cache/{CACHE_DIRNAME}/collections)…\n"
+                    "Installing Ansible collections from GitHub (first run, "
+                    f"no galaxy.ansible.com, into ~/.cache/{CACHE_DIRNAME}/collections)…\n"
                 )
             stderr.flush()
 
         try:
-            command = [
-                galaxy_bin or ansible_galaxy_bin(),
-                "collection",
-                "install",
-                "-r",
-                str(requirements),
-                "-p",
-                str(dest),
-                "--force",
-            ]
-            merged = _galaxy_env(home, env)
-            galaxy = command[0]
-            completed = subprocess.run(
-                command,
-                env=merged,
-                capture_output=True,
-                text=True,
-                timeout=GALAXY_TIMEOUT_SECONDS,
-                check=False,
-            )
+            galaxy = galaxy_bin or ansible_galaxy_bin()
         except FileNotFoundError as exc:
             raise CollectionInstallError(
                 "ansible-galaxy not found next to this interpreter or on PATH. "
                 "Reinstall plaibook (`pip install plaibook`); ansible-core is a dependency."
             ) from exc
+
+        merged = _galaxy_env(home, env)
+        needed = _runtime_required_keys(required)
+        cols = _load_requirement_rows(requirements)
+        try:
+            install_git_sources(galaxy, dest, cols, merged)
+            install_galaxy_github_mirrors(galaxy, dest, merged, needed=needed)
+        except CollectionInstallError:
+            raise
         except subprocess.TimeoutExpired as exc:
             raise CollectionInstallError(
                 f"ansible-galaxy timed out after {GALAXY_TIMEOUT_SECONDS}s installing "
                 f"collections into {dest}."
             ) from exc
-        needed = _runtime_required_keys(required)
-        if completed.returncode == 0:
-            stamp.write_text(digest + "\n", encoding="utf-8")
-            return dest
-
-        detail = (completed.stderr or completed.stdout or "").strip()
-        if not required:
-            raise CollectionInstallError(
-                f"ansible-galaxy failed installing collections into {dest}"
-                + (f":\n{detail}" if detail else ".")
-            )
-        if stderr is not None:
-            stderr.write(
-                "Galaxy install failed; installing collections from GitHub "
-                "(no galaxy.ansible.com)…\n"
-            )
-            stderr.flush()
-        try:
-            cols = _load_requirement_rows(requirements)
-            install_git_sources(galaxy, dest, cols, merged)
-            install_galaxy_github_mirrors(galaxy, dest, merged, needed=needed)
-        except CollectionInstallError:
-            raise
         except Exception as exc:
             raise CollectionInstallError(
-                f"GitHub collection fallback failed after Galaxy error into {dest}: {exc}"
-                + (f"\nGalaxy was:\n{detail}" if detail else ".")
+                f"GitHub collection install failed into {dest}: {exc}"
             ) from exc
-        if not _all_required_installed(dest, needed):
+        if needed and not _all_required_installed(dest, needed):
             missing = [
                 f"{ns}.{name}"
                 for ns, name in needed
                 if not collection_is_installed(dest, ns, name)
             ]
             raise CollectionInstallError(
-                f"ansible-galaxy failed installing collections into {dest}; "
-                f"GitHub fallback still missing {', '.join(missing)}"
-                + (f":\n{detail}" if detail else ".")
+                f"GitHub collection install into {dest} still missing {', '.join(missing)}"
             )
         stamp.write_text(digest + "\n", encoding="utf-8")
         return dest

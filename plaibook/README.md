@@ -19,9 +19,9 @@ plai review
 That is the product. `plai review` with no arguments reviews `HEAD` in
 the current directory. Needs Python 3.10 or newer. First run prompts
 for a provider (Cursor defaults to `gpt-5.6-luna` / `high`) and installs
-Galaxy collections into `~/.cache/ansible-plaibook/collections`. It never
-writes `~/.ansible/collections`, so a leftover symlink from a sibling
-checkout cannot break install.
+collections from GitHub into `~/.cache/ansible-plaibook/collections`
+(never galaxy.ansible.com). It never writes `~/.ansible/collections`, so
+a leftover symlink from a sibling checkout cannot break install.
 
 Until this version is on PyPI, the same wheel is `pip install .` from
 this checkout (or clone the repo under `$HOME` and `pip install` that
