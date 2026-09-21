@@ -27,10 +27,10 @@ collections:
     type: git
     # Pin the interface this role calls (effort mapping, structured_tool
     # / mcp coupling, playbook-owned sidecar, structured_tool_calls with
-    # parent vs nested caller). Moving main can silently change module
-    # arguments. SHA is the ansible-cursor structured_tool_calls PR even
-    # if that PR is still unmerged.
-    version: def5dcc15b6feb7d47e219f7959f6285f9101435
+    # parent vs nested caller, WaitLiveRun-after-drain flake fix). Moving
+    # main can silently change module arguments. SHA is ansible-cursor
+    # cursor/fix-named-lens-stream-edab (WaitLiveRun / subagent tools).
+    version: 7b487fd7571b1f17e160072bb4834d890d896591
   # community.general.jira — the native Jira module bug_context uses
   # to fetch/comment on tickets, replacing hand-rolled ansible.builtin.uri
   # calls against the REST API directly.

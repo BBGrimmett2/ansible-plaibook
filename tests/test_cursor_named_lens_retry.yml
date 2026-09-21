@@ -7,6 +7,8 @@
 #   (4) miss then nested → retry binds
 #   (5) Security bound + Review miss → sibling args kept, play continues
 #   (6) nonce mismatch → invalid attempt, no .text in fail_msg
+#   (7) fail_json-shaped result with nested execute still binds
+#       (WaitLiveRun-after-drain used to throw that payload away)
 #
 # Usage:
 #   ansible-playbook tests/test_cursor_named_lens_retry.yml
@@ -280,3 +282,42 @@
               Expected a fabrication-named invalid attempt without .text.
               Got: {{ security_cursor_lens_last_fail | default('') }}
             success_msg: "Nonce mismatch is an invalid attempt, without printing .text."
+
+    - name: Failed module return with nested execute must still bind
+      block:
+        - name: Reset failed-return bind flags
+          ansible.builtin.set_fact:
+            security_cursor_lens_valid: false
+            _cursor_security_lens: {}
+
+        - name: Bind nested execute from a fail_json-shaped Cursor result
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: bind_cursor_named_lens
+          vars:
+            cursor_raw:
+              failed: true
+              msg: "Cursor run finished with status error (run_id=run-1)"
+              status: error
+              usage_normalized:
+                input_tokens: 10
+                output_tokens: 2
+              structured_tool_calls:
+                - name: report_findings
+                  caller: nested
+                  agent_id:
+                  args: "{{ _nested_lens_args }}"
+            cursor_nonce_lens_label: "Security lens"
+            cursor_lens_tool: report_findings
+            cursor_lens_valid_var: security_cursor_lens_valid
+            cursor_lens_args_var: _cursor_security_lens
+            cursor_lens_fail_var: security_cursor_lens_last_fail
+
+        - name: Confirm nested execute bound from the failed return
+          ansible.builtin.assert:
+            that:
+              - security_cursor_lens_valid | bool
+              - _cursor_security_lens.findings[0].file == "lens.py"
+              - _cursor_security_lens.scores.security == 10
+            fail_msg: "A fail_json-shaped result with nested execute must still bind."
+            success_msg: "Nested execute bound from a failed module return."

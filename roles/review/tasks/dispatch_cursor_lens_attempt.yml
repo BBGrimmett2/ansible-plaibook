@@ -62,7 +62,32 @@
         cursor_raw: "{{ _cursor_lens_attempt_raw }}"
         cursor_lens_tool: report_findings
   rescue:
+    # fail_json used to skip usage and throw away a nested execute the
+    # module already captured (WaitLiveRun-after-drain status=error).
+    # Bind from the failed result when a nested execute is present; still
+    # record billed usage. Parent last-call still does not count.
+    - name: "Cursor: remember usage from a failed {{ cursor_nonce_lens_label }} return"
+      when: ansible_failed_result.usage_normalized is defined
+      ansible.builtin.set_fact:
+        "{{ cursor_lens_raw_var }}": "{{ ansible_failed_result }}"
+        pipeline_agent_calls: >-
+          {{ (pipeline_agent_calls | default([])) + [{
+               'target': review_org_repo + '#' + review_number,
+               'lens': cursor_lens_stats_name,
+               'model': ansible_failed_result.resolved_model | default(review_cursor_model),
+               'usage': ansible_failed_result.usage_normalized | default({}),
+               'attempt': cursor_lens_attempt_number | int
+             }] }}
+
+    - name: "Cursor: bind {{ cursor_nonce_lens_label }} nested execute from a failed return"
+      when: (ansible_failed_result.structured_tool_calls | default([]) | selectattr('caller', 'equalto', 'nested') | list | length) > 0
+      ansible.builtin.include_tasks: bind_cursor_named_lens.yml
+      vars:
+        cursor_raw: "{{ ansible_failed_result }}"
+        cursor_lens_tool: report_findings
+
     - name: "Cursor: mark {{ cursor_nonce_lens_label }} attempt failed"
+      when: not (lookup('vars', cursor_lens_valid_var) | default(false) | bool)
       ansible.builtin.set_fact:
         "{{ cursor_lens_valid_var }}": false
         "{{ cursor_lens_fail_var }}": "{{ ansible_failed_result.msg | default('named lens dispatch failed') }}"
