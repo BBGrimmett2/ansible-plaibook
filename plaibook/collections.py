@@ -71,6 +71,21 @@ def require_commit_sha(url: str, ref: object) -> str:
     raise CollectionInstallError(f"git collection {url} must pin a 40-character commit SHA, not {ref!r}")
 
 
+_GIT_USERINFO_RE = re.compile(r"(https?://|git\+)[^/\s:@]+(?::[^/\s@]*)?@")
+
+
+def redact_git_userinfo(text: str) -> str:
+    """Drop userinfo from git URLs so errors cannot log embedded credentials."""
+    return _GIT_USERINFO_RE.sub(r"\1", text)
+
+
+def _git_source_name_ok(name: str) -> bool:
+    """Git rows are a URL or a local path, never a bare FQCN."""
+    if name.startswith(("https://", "http://", "git+", "git@", "file://")):
+        return True
+    return name.startswith(("/", "./", "../"))
+
+
 def ansible_galaxy_bin() -> str:
     return ansible_tool_bin("ansible-galaxy")
 
@@ -183,8 +198,31 @@ def _load_requirement_rows(requirements: Path) -> list[dict]:
             raise CollectionInstallError(
                 f"{requirements} collections[{index}] must be a mapping, not {type(col).__name__}"
             )
+        _validate_requirement_row(requirements, index, col)
         rows.append(col)
     return rows
+
+
+def _validate_requirement_row(requirements: Path, index: int, col: dict) -> None:
+    """Reject rows the installer would skip and then stamp as a complete cache."""
+    where = f"{requirements} collections[{index}]"
+    name = col.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise CollectionInstallError(f"{where} must have a non-empty string name")
+    name = name.strip()
+    row_type = col.get("type")
+    url_like = name.startswith(("https://", "http://", "git+", "git@", "file://"))
+    if row_type != "git" and not url_like:
+        return
+    if row_type not in (None, "git"):
+        raise CollectionInstallError(f"{where} git source type must be git, not {row_type!r}")
+    if not _git_source_name_ok(name):
+        raise CollectionInstallError(f"{where} git source must be an https, http, git@, or file URL, not {name!r}")
+    url = name.removeprefix("git+")
+    try:
+        require_commit_sha(url, col.get("version"))
+    except CollectionInstallError as exc:
+        raise CollectionInstallError(f"{where}: {exc}") from exc
 
 
 def requirement_collection_keys(requirements: Path) -> list[tuple[str, str]]:
@@ -243,8 +281,9 @@ def _galaxy_env(home: Path | None, extra: dict[str, str] | None) -> dict[str, st
     return merged
 
 
-def _clone_at_ref(url: str, ref: str, dest: Path) -> None:
+def _clone_at_ref(url: str, ref: str, dest: Path, env: dict[str, str] | None = None) -> None:
     sha = require_commit_sha(url, ref)
+    safe_url = redact_git_userinfo(url)
     last_error: Exception | None = None
     for attempt in range(1, 4):
         if dest.exists():
@@ -254,6 +293,7 @@ def _clone_at_ref(url: str, ref: str, dest: Path) -> None:
             subprocess.run(
                 ["git", "-c", "advice.detachedHead=false", "init", "-b", "main"],
                 cwd=dest,
+                env=env,
                 check=True,
                 timeout=GALAXY_TIMEOUT_SECONDS,
                 capture_output=True,
@@ -262,6 +302,7 @@ def _clone_at_ref(url: str, ref: str, dest: Path) -> None:
             subprocess.run(
                 ["git", "remote", "add", "origin", url],
                 cwd=dest,
+                env=env,
                 check=True,
                 timeout=GALAXY_TIMEOUT_SECONDS,
                 capture_output=True,
@@ -270,6 +311,7 @@ def _clone_at_ref(url: str, ref: str, dest: Path) -> None:
             subprocess.run(
                 ["git", "-c", "advice.detachedHead=false", "fetch", "--depth", "1", "origin", sha],
                 cwd=dest,
+                env=env,
                 check=True,
                 timeout=GALAXY_TIMEOUT_SECONDS,
                 capture_output=True,
@@ -278,6 +320,7 @@ def _clone_at_ref(url: str, ref: str, dest: Path) -> None:
             subprocess.run(
                 ["git", "-c", "advice.detachedHead=false", "checkout", "FETCH_HEAD"],
                 cwd=dest,
+                env=env,
                 check=True,
                 timeout=GALAXY_TIMEOUT_SECONDS,
                 capture_output=True,
@@ -286,6 +329,7 @@ def _clone_at_ref(url: str, ref: str, dest: Path) -> None:
             got = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
                 cwd=dest,
+                env=env,
                 check=True,
                 timeout=GALAXY_TIMEOUT_SECONDS,
                 capture_output=True,
@@ -293,14 +337,15 @@ def _clone_at_ref(url: str, ref: str, dest: Path) -> None:
             )
             checked = got.stdout.strip().lower()
             if checked != sha:
-                raise CollectionInstallError(f"git checkout of {url} resolved to {checked}, not pinned {sha}")
+                raise CollectionInstallError(f"git checkout of {safe_url} resolved to {checked}, not pinned {sha}")
             return
         except CollectionInstallError:
             raise
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
             last_error = exc
             time.sleep(attempt * 4)
-    raise CollectionInstallError(f"git fetch failed for {url}@{sha}: {last_error}")
+    detail = redact_git_userinfo(str(last_error))
+    raise CollectionInstallError(f"git fetch failed for {safe_url}@{sha}: {detail}")
 
 
 def _build_collection_archive(galaxy: str, source: Path, output_dir: Path, env: dict[str, str]) -> Path:
@@ -370,16 +415,17 @@ def install_git_sources(
 ) -> None:
     for col in cols:
         name = col.get("name")
-        if not isinstance(name, str):
-            continue
-        is_git = col.get("type") == "git" or name.startswith(("https://", "http://", "git+", "git@"))
+        if not isinstance(name, str) or not name.strip():
+            raise CollectionInstallError("collection requirement is missing a non-empty string name")
+        name = name.strip()
+        is_git = col.get("type") == "git" or name.startswith(("https://", "http://", "git+", "git@", "file://"))
         if not is_git:
             continue
         url = name.removeprefix("git+")
         ref = require_commit_sha(url, col.get("version"))
         with tempfile.TemporaryDirectory(prefix="plaibook-coll-") as tmp:
             checkout = Path(tmp) / "collection"
-            _clone_at_ref(url, ref, checkout)
+            _clone_at_ref(url, ref, checkout, env)
             _install_from_dir(galaxy, checkout, dest, env)
 
 
@@ -399,7 +445,7 @@ def install_galaxy_github_mirrors(
             continue
         with tempfile.TemporaryDirectory(prefix="plaibook-coll-") as tmp:
             checkout = Path(tmp) / "collection"
-            _clone_at_ref(url, ref, checkout)
+            _clone_at_ref(url, ref, checkout, env)
             _install_from_dir(galaxy, checkout, dest, env)
 
 
@@ -477,7 +523,7 @@ def ensure_collections(
             raise CollectionInstallError(
                 f"ansible-galaxy timed out after {GALAXY_TIMEOUT_SECONDS}s installing collections into {dest}."
             ) from exc
-        except Exception as exc:
+        except (subprocess.SubprocessError, OSError) as exc:
             raise CollectionInstallError(f"GitHub collection install failed into {dest}: {exc}") from exc
         if needed and not _all_required_installed(dest, needed):
             missing = [f"{ns}.{name}" for ns, name in needed if not collection_is_installed(dest, ns, name)]

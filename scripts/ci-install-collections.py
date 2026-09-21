@@ -24,6 +24,7 @@ from plaibook.collections import (
     _load_requirement_rows,
     _runtime_required_keys,
     collection_is_installed,
+    redact_git_userinfo,
     require_commit_sha,
     requirement_collection_keys,
 )
@@ -125,13 +126,17 @@ def _clone_at_ref(url: str, ref: str, dest: Path, token: str | None) -> None:
             )
             checked = got.stdout.strip().lower()
             if checked != sha:
-                raise SystemExit(f"git checkout of {url} resolved to {checked}, not pinned {sha}")
+                safe_url = redact_git_userinfo(url)
+                raise SystemExit(f"git checkout of {safe_url} resolved to {checked}, not pinned {sha}")
             return
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             last_error = exc
-            print(f"git fetch {url}@{sha} attempt {attempt} failed", flush=True)
+            safe_url = redact_git_userinfo(url)
+            print(f"git fetch {safe_url}@{sha} attempt {attempt} failed", flush=True)
             time.sleep(attempt * 4)
-    raise SystemExit(f"git fetch failed for {url}@{sha}: {last_error}")
+    safe_url = redact_git_userinfo(url)
+    detail = redact_git_userinfo(str(last_error))
+    raise SystemExit(f"git fetch failed for {safe_url}@{sha}: {detail}")
 
 
 def _install_from_dir(galaxy: str, source: Path, dest: Path) -> None:
@@ -144,9 +149,10 @@ def _install_from_dir(galaxy: str, source: Path, dest: Path) -> None:
 def install_git_sources(galaxy: str, dest: Path, cols: list[dict], token: str | None) -> None:
     for col in cols:
         name = col.get("name")
-        if not isinstance(name, str):
-            continue
-        is_git = col.get("type") == "git" or name.startswith(("https://", "git+", "git@"))
+        if not isinstance(name, str) or not name.strip():
+            raise SystemExit("collection requirement is missing a non-empty string name")
+        name = name.strip()
+        is_git = col.get("type") == "git" or name.startswith(("https://", "http://", "git+", "git@", "file://"))
         if not is_git:
             continue
         url = name.removeprefix("git+")

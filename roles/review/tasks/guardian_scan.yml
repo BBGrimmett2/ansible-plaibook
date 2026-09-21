@@ -64,6 +64,16 @@
           {{ review_full_diff
              ~ ((_guardian_real_nl ~ _guardian_real_nl ~ '--- PR/MR description ---' ~ _guardian_real_nl ~ review_context) if review_context else '') }}
 
+    # credentials-in-git-url matches across newlines: any https:// URL, the
+    # next colon, then a later @github / @gitlab / @bitbucket mention.
+    # PR metadata (https://github.com/.../pull/N) plus an @github-advanced-security
+    # review comment is that shape and is not a credential. Real userinfo
+    # (https://user:secret@github.com) is kept — its @ is not preceded by
+    # whitespace. Same helper as filter_plugins/scan_input.py.
+    - name: Keep @host mentions from spanning into a git-credential match
+      ansible.builtin.set_fact:
+        _guardian_scan_input: "{{ _guardian_scan_input | neutralize_host_mentions }}"
+
     - name: Truncate the scan input if it exceeds the configured safety bound
       ansible.builtin.set_fact:
         guardian_scan_truncated: "{{ (_guardian_scan_input | length) > (review_guardian_max_scan_chars | int) }}"

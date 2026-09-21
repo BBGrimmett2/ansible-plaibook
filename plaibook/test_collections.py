@@ -15,12 +15,15 @@ import yaml
 from plaibook.collections import (
     GALAXY_GITHUB_MIRRORS,
     CollectionInstallError,
+    _clone_at_ref,
     collection_is_installed,
     collection_key_from_requirement,
     collections_dir,
     collections_lock_path,
     ensure_collections,
+    install_git_sources,
     merge_collections_path,
+    redact_git_userinfo,
     require_commit_sha,
     requirement_collection_keys,
 )
@@ -230,6 +233,7 @@ def test_requirement_collection_keys_maps_git_urls_and_fqcns(tmp_path):
         "collections:\n"
         "  - name: https://github.com/aknochow/ansible-openshell.git\n"
         "    type: git\n"
+        "    version: f2df487af9d08d314235394e281b71cfdcdb5134\n"
         "  - name: community.general\n"
         "  - name: kubernetes.core\n"
         "  - name: ansible.posix\n"
@@ -326,7 +330,10 @@ def test_ensure_collections_surfaces_github_install_failure(tmp_path, monkeypatc
     playbook = tmp_path / "playbook"
     playbook.mkdir()
     (playbook / "collections-requirements.yml").write_text(
-        "collections:\n  - name: https://github.com/example/ansible-posix.git\n    type: git\n"
+        "collections:\n"
+        "  - name: https://github.com/example/ansible-posix.git\n"
+        "    type: git\n"
+        "    version: e98d9a0756458be1ac710988498000973889075c\n"
     )
     home = tmp_path / "home"
 
@@ -379,10 +386,102 @@ def test_ensure_collections_rejects_mutable_git_ref(tmp_path):
         "collections:\n  - name: https://github.com/example/ansible-posix.git\n    type: git\n    version: main\n"
     )
     home = tmp_path / "home"
-    with pytest.raises(CollectionInstallError, match="40-character commit SHA"):
+    with pytest.raises(CollectionInstallError, match=r"collections\[0\].*40-character commit SHA"):
         ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
     dest = collections_dir(home)
     assert not (dest / ".requirements.sha256").is_file()
+
+
+def test_ensure_collections_rejects_row_without_string_name(tmp_path):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text("collections:\n  - name: 1\n  - name: ansible.posix\n")
+    home = tmp_path / "home"
+    with pytest.raises(CollectionInstallError, match=r"collections\[0\].*non-empty string name"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    dest = collections_dir(home)
+    assert not (dest / ".requirements.sha256").is_file()
+
+
+def test_ensure_collections_rejects_git_row_without_url(tmp_path):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text(
+        "collections:\n  - name: ansible.posix\n    type: git\n    version: e98d9a0756458be1ac710988498000973889075c\n"
+    )
+    home = tmp_path / "home"
+    with pytest.raises(CollectionInstallError, match=r"collections\[0\].*git source must be"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    assert not (collections_dir(home) / ".requirements.sha256").is_file()
+
+
+def test_ensure_collections_lets_unexpected_errors_propagate(tmp_path, monkeypatch):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text("collections:\n  - name: ansible.posix\n")
+    home = tmp_path / "home"
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("programmer bug")
+
+    monkeypatch.setattr("plaibook.collections.install_git_sources", boom)
+    with pytest.raises(RuntimeError, match="programmer bug"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+
+
+def test_ensure_collections_wraps_subprocess_and_oserror(tmp_path, monkeypatch):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text("collections:\n  - name: ansible.posix\n")
+    home = tmp_path / "home"
+
+    def boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("plaibook.collections.install_git_sources", boom)
+    with pytest.raises(CollectionInstallError, match="GitHub collection install failed"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+
+
+def test_git_fetch_error_redacts_userinfo(tmp_path, monkeypatch):
+    monkeypatch.setattr("plaibook.collections.time.sleep", lambda *_a, **_k: None)
+
+    def boom(*_args, **_kwargs):
+        raise OSError("auth failed for https://user:supersecret1@github.com/org/repo.git")
+
+    monkeypatch.setattr("plaibook.collections.subprocess.run", boom)
+    dest = tmp_path / "checkout"
+    url = "https://user:supersecret1@github.com/org/repo.git"
+    sha = "e98d9a0756458be1ac710988498000973889075c"
+    with pytest.raises(CollectionInstallError, match="git fetch failed") as raised:
+        _clone_at_ref(url, sha, dest, env={"GIT_TERMINAL_PROMPT": "0"})
+    message = str(raised.value)
+    assert "supersecret1" not in message
+    assert "user:" not in message
+    assert "github.com/org/repo.git" in message
+    assert redact_git_userinfo(url) == "https://github.com/org/repo.git"
+
+
+def test_install_git_sources_passes_env_to_clone(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_clone(url, ref, dest, env=None):
+        seen["env"] = env
+        dest.mkdir(parents=True)
+
+    monkeypatch.setattr("plaibook.collections._clone_at_ref", fake_clone)
+    monkeypatch.setattr("plaibook.collections._install_from_dir", lambda *a, **k: None)
+    env = {"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_COUNT": "1"}
+    cols = [
+        {
+            "name": "https://github.com/example/ansible-posix.git",
+            "type": "git",
+            "version": "e98d9a0756458be1ac710988498000973889075c",
+        }
+    ]
+    install_git_sources("ansible-galaxy", tmp_path, cols, env)
+    assert seen["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert seen["env"]["GIT_CONFIG_COUNT"] == "1"
 
 
 def test_ensure_collections_installs_from_github_never_galaxy_api(tmp_path, monkeypatch):
@@ -392,7 +491,7 @@ def test_ensure_collections_installs_from_github_never_galaxy_api(tmp_path, monk
         "collections:\n"
         "  - name: https://github.com/ansible-collections/community.general.git\n"
         "    type: git\n"
-        "    version: '13.4.0'\n"
+        "    version: 049524674b13ad9782849c427266935c8ec61954\n"
     )
     home = tmp_path / "home"
     err = []
@@ -433,7 +532,7 @@ def test_ensure_collections_installs_git_sources_with_no_deps(tmp_path, monkeypa
     home = tmp_path / "home"
     calls = []
 
-    def fake_clone(url, ref, dest):
+    def fake_clone(url, ref, dest, env=None):
         dest.mkdir(parents=True, exist_ok=True)
 
     def fake_run(cmd, **kwargs):
