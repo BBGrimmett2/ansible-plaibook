@@ -10,8 +10,8 @@ cd "${REPO_ROOT}"
 export ANSIBLE_CONFIG="${REPO_ROOT}/ansible.cfg"
 
 PLAYBOOKS=(
-  "tests/test_cursor_named_lens_retry.yml"
   "tests/test_checklist_execution.yml"
+  "tests/test_cursor_named_lens_retry.yml"
   "tests/test_cursor_lens_attempt_usage.yml"
   "tests/test_cursor_prompt_nonce.yml"
   "tests/test_guardian_not_installed.yml"
@@ -35,7 +35,7 @@ echo "Running ${#PLAYBOOKS[@]} offline Ansible playbook test(s)..."
 # named-lens retry playbook swaps in tests/library/cursor_agent_stub.py
 # (no live Cursor) via ANSIBLE_LIBRARY + cursor_agent_module.
 STUB_LIBRARY="${REPO_ROOT}/tests/library"
-STUB_PAYLOAD="${TMPDIR:-/tmp}/ansible-plaibook-cursor-agent-stub.json"
+STUB_PAYLOAD="${REPO_ROOT}/tests/.cursor_agent_stub.json"
 
 run_playbook() {
   local pb="$1"

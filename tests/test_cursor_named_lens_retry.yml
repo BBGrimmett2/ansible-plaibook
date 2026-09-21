@@ -18,7 +18,7 @@
 #
 # Usage:
 #   ANSIBLE_LIBRARY=$PWD/tests/library \
-#   CURSOR_AGENT_STUB_FILE=/tmp/ansible-plaibook-cursor-agent-stub.json \
+#   CURSOR_AGENT_STUB_FILE=$PWD/tests/.cursor_agent_stub.json \
 #     ansible-playbook tests/test_cursor_named_lens_retry.yml
 
 - name: "Cursor named-lens bind retries: miss is invalid attempt, sibling kept"
@@ -33,7 +33,7 @@
     review_repo_path: "{{ playbook_dir }}"
     review_cursor_api_key: stub-not-a-real-key
     cursor_agent_module: cursor_agent_stub
-    cursor_agent_stub_file: "{{ lookup('ansible.builtin.env', 'CURSOR_AGENT_STUB_FILE') | default('/tmp/ansible-plaibook-cursor-agent-stub.json', true) }}"
+    cursor_agent_stub_file: "{{ lookup('ansible.builtin.env', 'CURSOR_AGENT_STUB_FILE') | default(playbook_dir ~ '/.cursor_agent_stub.json', true) }}"
     _nested_lens_args:
       findings:
         - lens: Security
@@ -60,12 +60,6 @@
     CURSOR_AGENT_STUB_FILE: "{{ cursor_agent_stub_file }}"
 
   tasks:
-    - name: Ensure the cursor agent stub payload directory exists
-      ansible.builtin.file:
-        path: "{{ cursor_agent_stub_file | dirname }}"
-        state: directory
-        mode: "0700"
-
     - name: Nested execute must bind
       block:
         - name: Reset Security bind flags
