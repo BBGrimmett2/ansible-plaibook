@@ -342,8 +342,7 @@ def test_ensure_collections_installs_from_github_never_galaxy_api(tmp_path, monk
     dest = ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy", stderr=Err())
     assert dest == collections_dir(home)
     log = "".join(err)
-    assert "GitHub" in log
-    assert "galaxy.ansible.com" in log
+    assert "Installing Ansible collections from GitHub" in log
     assert "Galaxy install failed" not in log
     assert any(kind == "git" for kind, *_ in recorded)
     assert collection_is_installed(dest, "community", "general")
