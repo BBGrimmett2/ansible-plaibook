@@ -125,5 +125,9 @@ jobs:
           uv venv --python 3.10 .venv-legacy
           uv pip install --python .venv-legacy/bin/python --require-hashes \
             -r scripts/legacy-setuptools-requirements.txt
-          .venv-legacy/bin/python -m pip install . --no-build-isolation
-          .venv-legacy/bin/plai --version
+          # This job proves the setuptools 68 backend can build plaibook.
+          # Do not resolve pyproject dependencies here (unhashed). Runtime
+          # deps are locked in uv.lock and audited by lockfile-audit.
+          .venv-legacy/bin/python -m pip install . --no-build-isolation --no-deps
+          test -x .venv-legacy/bin/plai
+          .venv-legacy/bin/python -c "from importlib.metadata import version; print(version('plaibook'))"

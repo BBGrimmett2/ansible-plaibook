@@ -2,19 +2,20 @@
 # Git sources rather than local dir paths — this needs to resolve from
 # any machine (an AAP Execution Environment build, a fresh clone),
 # not just this laptop. Both are personal projects, public on GitHub.
-# Dependabot cannot update this file. SHA pins (not `version: main`) are
-# refreshed by scripts/bump_collection_pins.py and
-# .github/workflows/bump-collection-pins.yml.
+# Dependabot cannot update this file. SHA pins are refreshed by
+# scripts/bump_collection_pins.py and
+# .github/workflows/bump-collection-pins.yml (aknochow interface pins
+# only; ansible-collections release SHAs stay on the tagged commit).
 collections:
   - name: https://github.com/aknochow/ansible-openshell.git
     type: git
-    version: main
+    version: f2df487af9d08d314235394e281b71cfdcdb5134
   - name: https://github.com/aknochow/ansible-claude.git
     type: git
-    version: main
+    version: 4b59640b7728b0604f0fd450d3cc9afe276e6c6a
   - name: https://github.com/aknochow/ansible-gemini.git
     type: git
-    version: main
+    version: a9d43afa3d3d5db0aac10672ef0edced4c00bec7
   - name: https://github.com/aknochow/ansible-openai.git
     type: git
     # Pin the interface this role calls; moving main can silently change

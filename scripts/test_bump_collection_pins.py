@@ -158,8 +158,10 @@ def test_repo_requirements_only_bumps_aknochow_interface_pins():
     assert pins
     assert {pin.owner for pin in pins} == {"aknochow"}
     repos = {pin.repo for pin in pins}
-    assert "ansible-openai" in repos
-    assert "ansible-cursor" in repos
-    assert "community.general" not in repos
-    assert "kubernetes.core" not in repos
-    assert "ansible.posix" not in repos
+    assert repos == {
+        "ansible-openshell",
+        "ansible-claude",
+        "ansible-gemini",
+        "ansible-openai",
+        "ansible-cursor",
+    }

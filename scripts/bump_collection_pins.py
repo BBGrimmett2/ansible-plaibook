@@ -3,9 +3,9 @@
 
 Dependabot has no Ansible Galaxy / collections-requirements.yml ecosystem, so
 `.github/dependabot.yml` cannot keep git SHA pins current. Floating
-`version: main` entries are left alone — those already track HEAD. Only
-`type: git` collections whose `version` is a hex SHA and whose GitHub
-owner is in BUMP_OWNERS (aknochow interface pins) are bumped.
+`version: main` entries are left alone if any remain — those already
+track HEAD. Only `type: git` collections whose `version` is a hex SHA
+and whose GitHub owner is in BUMP_OWNERS (aknochow pins) are bumped.
 ansible-collections release SHAs stay on the tagged commit.
 
 Usage:

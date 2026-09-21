@@ -6,6 +6,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -30,6 +31,7 @@ LOCK_NAME = "collections.lock"
 ENV_COLLECTIONS = "ANSIBLE_COLLECTIONS_PATH"
 ENV_COLLECTIONS_LEGACY = "ANSIBLE_COLLECTIONS_PATHS"
 GALAXY_TIMEOUT_SECONDS = 600
+COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 # GitHub mirrors for FQCN rows and for galaxy.yml deps (community.general
 # pulls community.library_inventory_filtering_v1). Refs are commit SHAs of
@@ -60,6 +62,13 @@ GALAXY_GITHUB_MIRRORS: dict[str, tuple[str, str]] = {
 
 class CollectionInstallError(RuntimeError):
     """Could not install collections-requirements.yml from GitHub."""
+
+
+def require_commit_sha(url: str, ref: object) -> str:
+    """Git collections must pin a full commit. Branches, tags, and HEAD move."""
+    if isinstance(ref, str) and COMMIT_SHA_RE.fullmatch(ref.lower()):
+        return ref.lower()
+    raise CollectionInstallError(f"git collection {url} must pin a 40-character commit SHA, not {ref!r}")
 
 
 def ansible_galaxy_bin() -> str:
@@ -152,12 +161,35 @@ def collection_key_from_requirement(col: object) -> tuple[str, str] | None:
     return _key_from_fqcn(name)
 
 
+def _load_requirement_rows(requirements: Path) -> list[dict]:
+    """Parse collections-requirements.yml. Malformed files must not look empty."""
+    data = yaml.safe_load(requirements.read_bytes())
+    if data is None:
+        return []
+    if not isinstance(data, dict):
+        raise CollectionInstallError(
+            f"{requirements} must be a mapping with a collections list, not {type(data).__name__}"
+        )
+    if "collections" not in data:
+        return []
+    cols = data["collections"]
+    if cols is None:
+        return []
+    if not isinstance(cols, list):
+        raise CollectionInstallError(f"{requirements} collections: must be a list, not {type(cols).__name__}")
+    rows: list[dict] = []
+    for index, col in enumerate(cols):
+        if not isinstance(col, dict):
+            raise CollectionInstallError(
+                f"{requirements} collections[{index}] must be a mapping, not {type(col).__name__}"
+            )
+        rows.append(col)
+    return rows
+
+
 def requirement_collection_keys(requirements: Path) -> list[tuple[str, str]]:
     """Named collections the stamp must contain — not a raw directory count."""
-    data = yaml.safe_load(requirements.read_bytes()) or {}
-    cols = data.get("collections") or []
-    if not isinstance(cols, list):
-        return []
+    cols = _load_requirement_rows(requirements)
     keys: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for col in cols:
@@ -212,6 +244,7 @@ def _galaxy_env(home: Path | None, extra: dict[str, str] | None) -> dict[str, st
 
 
 def _clone_at_ref(url: str, ref: str, dest: Path) -> None:
+    sha = require_commit_sha(url, ref)
     last_error: Exception | None = None
     for attempt in range(1, 4):
         if dest.exists():
@@ -235,7 +268,7 @@ def _clone_at_ref(url: str, ref: str, dest: Path) -> None:
                 text=True,
             )
             subprocess.run(
-                ["git", "-c", "advice.detachedHead=false", "fetch", "--depth", "1", "origin", ref],
+                ["git", "-c", "advice.detachedHead=false", "fetch", "--depth", "1", "origin", sha],
                 cwd=dest,
                 check=True,
                 timeout=GALAXY_TIMEOUT_SECONDS,
@@ -250,16 +283,27 @@ def _clone_at_ref(url: str, ref: str, dest: Path) -> None:
                 capture_output=True,
                 text=True,
             )
+            got = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=dest,
+                check=True,
+                timeout=GALAXY_TIMEOUT_SECONDS,
+                capture_output=True,
+                text=True,
+            )
+            checked = got.stdout.strip().lower()
+            if checked != sha:
+                raise CollectionInstallError(f"git checkout of {url} resolved to {checked}, not pinned {sha}")
             return
+        except CollectionInstallError:
+            raise
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
             last_error = exc
             time.sleep(attempt * 4)
-    raise CollectionInstallError(f"git fetch failed for {url}@{ref}: {last_error}")
+    raise CollectionInstallError(f"git fetch failed for {url}@{sha}: {last_error}")
 
 
-def _install_from_dir(
-    galaxy: str, source: Path, dest: Path, env: dict[str, str]
-) -> None:
+def _install_from_dir(galaxy: str, source: Path, dest: Path, env: dict[str, str]) -> None:
     completed = subprocess.run(
         [
             galaxy,
@@ -280,17 +324,8 @@ def _install_from_dir(
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
         raise CollectionInstallError(
-            f"ansible-galaxy install {source} --no-deps failed"
-            + (f":\n{detail}" if detail else ".")
+            f"ansible-galaxy install {source} --no-deps failed" + (f":\n{detail}" if detail else ".")
         )
-
-
-def _load_requirement_rows(requirements: Path) -> list[dict]:
-    data = yaml.safe_load(requirements.read_bytes()) or {}
-    cols = data.get("collections") or []
-    if not isinstance(cols, list):
-        return []
-    return [col for col in cols if isinstance(col, dict)]
 
 
 def install_git_sources(
@@ -307,7 +342,7 @@ def install_git_sources(
         if not is_git:
             continue
         url = name.removeprefix("git+")
-        ref = str(col.get("version") or "HEAD")
+        ref = require_commit_sha(url, col.get("version"))
         with tempfile.TemporaryDirectory(prefix="plaibook-coll-") as tmp:
             checkout = Path(tmp) / "collection"
             _clone_at_ref(url, ref, checkout)
@@ -406,22 +441,13 @@ def ensure_collections(
             raise
         except subprocess.TimeoutExpired as exc:
             raise CollectionInstallError(
-                f"ansible-galaxy timed out after {GALAXY_TIMEOUT_SECONDS}s installing "
-                f"collections into {dest}."
+                f"ansible-galaxy timed out after {GALAXY_TIMEOUT_SECONDS}s installing collections into {dest}."
             ) from exc
         except Exception as exc:
-            raise CollectionInstallError(
-                f"GitHub collection install failed into {dest}: {exc}"
-            ) from exc
+            raise CollectionInstallError(f"GitHub collection install failed into {dest}: {exc}") from exc
         if needed and not _all_required_installed(dest, needed):
-            missing = [
-                f"{ns}.{name}"
-                for ns, name in needed
-                if not collection_is_installed(dest, ns, name)
-            ]
-            raise CollectionInstallError(
-                f"GitHub collection install into {dest} still missing {', '.join(missing)}"
-            )
+            missing = [f"{ns}.{name}" for ns, name in needed if not collection_is_installed(dest, ns, name)]
+            raise CollectionInstallError(f"GitHub collection install into {dest} still missing {', '.join(missing)}")
         stamp.write_text(digest + "\n", encoding="utf-8")
         return dest
 

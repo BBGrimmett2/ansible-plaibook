@@ -21,6 +21,7 @@ from plaibook.collections import (
     collections_lock_path,
     ensure_collections,
     merge_collections_path,
+    require_commit_sha,
     requirement_collection_keys,
 )
 from plaibook.playbook import run_ansible_playbook
@@ -336,6 +337,52 @@ def test_ensure_collections_surfaces_github_install_failure(tmp_path, monkeypatc
         ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
 
 
+def test_ensure_collections_rejects_non_list_collections(tmp_path):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text("collections: {}\n")
+    home = tmp_path / "home"
+    with pytest.raises(CollectionInstallError, match="must be a list"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    dest = collections_dir(home)
+    assert not (dest / ".requirements.sha256").is_file()
+
+
+def test_ensure_collections_rejects_non_mapping_collection_row(tmp_path):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text("collections:\n  - community.general\n")
+    home = tmp_path / "home"
+    with pytest.raises(CollectionInstallError, match="must be a mapping"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    dest = collections_dir(home)
+    assert not (dest / ".requirements.sha256").is_file()
+
+
+def test_require_commit_sha_rejects_branches_tags_and_head():
+    url = "https://github.com/example/ansible-posix.git"
+    assert (
+        require_commit_sha(url, "E98D9A0756458BE1AC710988498000973889075C")
+        == "e98d9a0756458be1ac710988498000973889075c"
+    )
+    for ref in ("main", "HEAD", "2.2.2", "e98d9a0", None, ""):
+        with pytest.raises(CollectionInstallError, match="40-character commit SHA"):
+            require_commit_sha(url, ref)
+
+
+def test_ensure_collections_rejects_mutable_git_ref(tmp_path):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text(
+        "collections:\n  - name: https://github.com/example/ansible-posix.git\n    type: git\n    version: main\n"
+    )
+    home = tmp_path / "home"
+    with pytest.raises(CollectionInstallError, match="40-character commit SHA"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    dest = collections_dir(home)
+    assert not (dest / ".requirements.sha256").is_file()
+
+
 def test_ensure_collections_installs_from_github_never_galaxy_api(tmp_path, monkeypatch):
     playbook = tmp_path / "playbook"
     playbook.mkdir()
@@ -376,7 +423,10 @@ def test_ensure_collections_installs_git_sources_with_no_deps(tmp_path, monkeypa
     playbook = tmp_path / "playbook"
     playbook.mkdir()
     (playbook / "collections-requirements.yml").write_text(
-        "collections:\n  - name: https://github.com/example/ansible-posix.git\n    type: git\n    version: HEAD\n"
+        "collections:\n"
+        "  - name: https://github.com/example/ansible-posix.git\n"
+        "    type: git\n"
+        "    version: e98d9a0756458be1ac710988498000973889075c\n"
     )
     home = tmp_path / "home"
     calls = []
@@ -658,10 +708,18 @@ def test_ensure_collections_serializes_two_processes(tmp_path):
         capture_output=True,
     )
 
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=src,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
     playbook = tmp_path / "playbook"
     playbook.mkdir()
     (playbook / "collections-requirements.yml").write_text(
-        f"collections:\n  - name: {src}\n    type: git\n    version: HEAD\n"
+        f"collections:\n  - name: {src}\n    type: git\n    version: {sha}\n"
     )
     home = tmp_path / "home"
     home.mkdir()

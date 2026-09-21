@@ -21,12 +21,13 @@ import tempfile
 import time
 from pathlib import Path
 
-import yaml
-
 from plaibook.collections import (
     GALAXY_GITHUB_MIRRORS,
     GALAXY_TIMEOUT_SECONDS,
+    CollectionInstallError,
+    _load_requirement_rows,
     collection_is_installed,
+    require_commit_sha,
     requirement_collection_keys,
 )
 
@@ -43,11 +44,10 @@ def _dest() -> Path:
 
 
 def _requirements() -> list[dict]:
-    data = yaml.safe_load(REQUIREMENTS.read_bytes()) or {}
-    cols = data.get("collections") or []
-    if not isinstance(cols, list):
-        raise SystemExit(f"{REQUIREMENTS} collections: is not a list")
-    return cols
+    try:
+        return _load_requirement_rows(REQUIREMENTS)
+    except CollectionInstallError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def _installed_count(dest: Path) -> int:
@@ -108,6 +108,10 @@ def _git(args: list[str], *, cwd: Path | None = None, token: str | None) -> None
 
 
 def _clone_at_ref(url: str, ref: str, dest: Path, token: str | None) -> None:
+    try:
+        sha = require_commit_sha(url, ref)
+    except CollectionInstallError as exc:
+        raise SystemExit(str(exc)) from exc
     last_error: Exception | None = None
     for attempt in range(1, 4):
         if dest.exists():
@@ -116,14 +120,27 @@ def _clone_at_ref(url: str, ref: str, dest: Path, token: str | None) -> None:
         try:
             _git(["init", "-b", "main"], cwd=dest, token=token)
             _git(["remote", "add", "origin", url], cwd=dest, token=token)
-            _git(["fetch", "--depth", "1", "origin", ref], cwd=dest, token=token)
+            _git(["fetch", "--depth", "1", "origin", sha], cwd=dest, token=token)
             _git(["checkout", "FETCH_HEAD"], cwd=dest, token=token)
+            got = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=dest,
+                check=True,
+                timeout=GALAXY_TIMEOUT_SECONDS,
+                capture_output=True,
+                text=True,
+            )
+            checked = got.stdout.strip().lower()
+            if checked != sha:
+                raise SystemExit(
+                    f"git checkout of {url} resolved to {checked}, not pinned {sha}"
+                )
             return
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             last_error = exc
-            print(f"git fetch {url}@{ref} attempt {attempt} failed", flush=True)
+            print(f"git fetch {url}@{sha} attempt {attempt} failed", flush=True)
             time.sleep(attempt * 4)
-    raise SystemExit(f"git fetch failed for {url}@{ref}: {last_error}")
+    raise SystemExit(f"git fetch failed for {url}@{sha}: {last_error}")
 
 
 def _install_from_dir(galaxy: str, source: Path, dest: Path) -> None:
@@ -192,7 +209,7 @@ def install_git_sources(galaxy: str, dest: Path, cols: list[dict], token: str | 
         if not is_git:
             continue
         url = name.removeprefix("git+")
-        ref = str(col.get("version") or "HEAD")
+        ref = require_commit_sha(url, col.get("version"))
         print(f"GitHub fallback: {url}@{ref}", flush=True)
         with tempfile.TemporaryDirectory(prefix="plaibook-coll-") as tmp:
             checkout = Path(tmp) / "collection"
