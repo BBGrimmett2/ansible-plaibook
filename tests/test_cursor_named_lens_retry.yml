@@ -12,8 +12,10 @@
 #       throw that payload away)
 #   (8) fail_json parent-only through the same rescue does not bind and
 #       is not billed as a lens call
+#   (9) fail_json miss after a stale cursor_lens_fail_var records this
+#       attempt's module error, not the previous attempt's text
 #
-# (7) and (8) require tests/library/cursor_agent_stub.py on ANSIBLE_LIBRARY
+# (7), (8), and (9) require tests/library/cursor_agent_stub.py on ANSIBLE_LIBRARY
 # and CURSOR_AGENT_STUB_FILE (scripts/run_playbook_tests.sh sets both).
 #
 # Usage:
@@ -442,3 +444,68 @@
               calls={{ pipeline_agent_calls | default([]) }}
               fail={{ security_cursor_lens_last_fail | default('') }}
             success_msg: "Rescue skipped parent-only bind and billing."
+
+    - name: Retry miss must record this attempt's error, not a stale fail_msg
+      block:
+        - name: Seed a stale fail_msg as if attempt 1 already failed
+          ansible.builtin.set_fact:
+            security_cursor_lens_valid: false
+            _cursor_security_lens: {}
+            _cursor_security_raw: {}
+            security_cursor_lens_last_fail: "STALE_ATTEMPT_1_MUST_NOT_REMAIN"
+            pipeline_agent_calls: []
+
+        - name: Write fail_json miss stub with a distinct attempt-2 message
+          ansible.builtin.copy:
+            dest: "{{ cursor_agent_stub_file }}"
+            mode: "0600"
+            content: "{{ _miss_fail_stub | to_json }}"
+          vars:
+            _miss_fail_stub:
+              failed: true
+              msg: "Cursor run finished with status error (run_id=run-2)"
+              status: error
+              resolved_model: gpt-5.6-luna
+              usage_normalized:
+                input_tokens: 4
+                output_tokens: 1
+                cache_write_tokens: 0
+                cache_read_tokens: 0
+                thinking_tokens: 0
+                total_tokens: 5
+              structured_tool_calls: []
+
+        - name: Dispatch the fail_json miss through attempt rescue
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: dispatch_cursor_lens_attempt
+          vars:
+            cursor_lens_attempt_number: 2
+            cursor_lens_agent_id: security_lens
+            cursor_lens_description: stub security lens
+            cursor_lens_prompt: stub security prompt
+            cursor_lens_schema: { type: object }
+            cursor_lens_tool_description: Submit the security findings.
+            cursor_nonce_lens_label: "Security lens"
+            cursor_lens_valid_var: security_cursor_lens_valid
+            cursor_lens_args_var: _cursor_security_lens
+            cursor_lens_fail_var: security_cursor_lens_last_fail
+            cursor_lens_raw_var: _cursor_security_raw
+            cursor_lens_stats_name: security
+            cursor_agent_module: cursor_agent_stub
+
+        - name: Confirm fail_msg is this attempt's module error
+          ansible.builtin.assert:
+            that:
+              - (_cursor_security_raw.stub | default(false) | bool)
+              - not (security_cursor_lens_valid | bool)
+              - "'STALE_ATTEMPT_1_MUST_NOT_REMAIN' not in (security_cursor_lens_last_fail | default(''))"
+              - "'run-2' in (security_cursor_lens_last_fail | default(''))"
+              - "'.text' not in (security_cursor_lens_last_fail | default(''))"
+              - "'SECRET_DRAFT_MUST_NOT_APPEAR' not in (security_cursor_lens_last_fail | default(''))"
+            fail_msg: >-
+              Retry miss must overwrite cursor_lens_fail_var with this
+              attempt's module error, not keep a prior attempt's text.
+              valid={{ security_cursor_lens_valid | default('') }}
+              fail={{ security_cursor_lens_last_fail | default('') }}
+            success_msg: "Retry miss recorded this attempt's error, not a stale fail_msg."

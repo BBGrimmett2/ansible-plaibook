@@ -85,8 +85,16 @@
         cursor_raw: "{{ lookup('vars', cursor_lens_raw_var) | default(ansible_failed_result, true) }}"
         cursor_lens_tool: report_findings
 
-    - name: "Cursor: mark {{ cursor_nonce_lens_label }} attempt failed"
-      when: not (lookup('vars', cursor_lens_valid_var) | default(false) | bool)
+    # cursor_lens_fail_var persists across dispatch_lens_cursor.yml's
+    # retry loop. A truthy default kept attempt 1's text after a later
+    # miss failed for a different reason. Write this rescue's module
+    # error only when bind did not run this attempt (no nested execute).
+    # When bind ran, its rescue already set_facts this attempt's
+    # nonce/trust fail_msg — leave it, do not overwrite with status=error.
+    - name: "Cursor: record this attempt's module error when bind did not run"
+      when:
+        - not (lookup('vars', cursor_lens_valid_var) | default(false) | bool)
+        - (ansible_failed_result.structured_tool_calls | default([]) | selectattr('caller', 'equalto', 'nested') | list | length) == 0
       ansible.builtin.set_fact:
         "{{ cursor_lens_valid_var }}": false
-        "{{ cursor_lens_fail_var }}": "{{ lookup('vars', cursor_lens_fail_var) | default(ansible_failed_result.msg | default('named lens dispatch failed'), true) }}"
+        "{{ cursor_lens_fail_var }}": "{{ ansible_failed_result.msg | default('named lens dispatch failed') }}"
