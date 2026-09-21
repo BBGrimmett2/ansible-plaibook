@@ -50,19 +50,10 @@ run_playbook() {
     ansible-playbook "${pb}" >"${out}" 2>&1
   fi
   rc=$?
-  set -e
+  set -euo pipefail
   cat "${out}"
   if [[ "${rc}" -ne 0 ]]; then
-    local snippet
-    snippet="$(python3 -c '
-import pathlib, re, sys
-t = pathlib.Path(sys.argv[1]).read_text(errors="replace")
-lines = t.splitlines()
-picked = [ln for ln in lines if re.search(r"fatal:|FAILED!|fail_msg|Assertion|origin:", ln)]
-blob = "\n".join(picked[-40:] if picked else lines[-40:])
-print(blob.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
-' "${out}")
-    echo "::error file=${pb},title=Playbook test failed::${snippet}"
+    echo "::error file=${pb},title=Playbook test failed::${pb} exited ${rc}"
     rm -f "${out}"
     return "${rc}"
   fi
