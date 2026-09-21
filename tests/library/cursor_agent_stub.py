@@ -2,7 +2,7 @@
 # Copyright: (c) 2026, Adam Knochowski (@aknochow)
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Offline stub of aknochow.cursor.agent for plaibook playbook tests.
+"""Offline stand-in for aknochow.cursor.agent in playbook tests.
 
 Reads CURSOR_AGENT_STUB_FILE (JSON object). If the object has failed=true,
 fail_json with the remaining keys (the WaitLiveRun-after-drain shape).
@@ -18,35 +18,55 @@ from ansible.module_utils.basic import AnsibleModule
 
 DOCUMENTATION = r"""
 ---
-module: agent
-short_description: Offline stub of aknochow.cursor.agent
+module: cursor_agent_stub
+short_description: Offline stand-in for aknochow.cursor.agent
 description:
-  - Test double. Returns the JSON object in E(CURSOR_AGENT_STUB_FILE).
+  - Test double used by tests/test_cursor_named_lens_retry.yml.
+  - Returns the JSON object in E(CURSOR_AGENT_STUB_FILE).
   - Does not call cursor-sdk.
 author:
   - Adam Knochowski (@aknochow)
 options:
   prompt:
+    description: Ignored. Matches aknochow.cursor.agent.
     type: str
     required: true
   model:
+    description: Ignored. Matches aknochow.cursor.agent.
     type: str
     required: true
   effort:
+    description: Ignored. Matches aknochow.cursor.agent.
     type: str
   tools:
+    description: Ignored. Matches aknochow.cursor.agent.
+    type: list
+    elements: str
+  disallowed_tools:
+    description: Ignored. Matches aknochow.cursor.agent.
     type: list
     elements: str
   structured_tool:
+    description: Ignored. Matches aknochow.cursor.agent.
     type: dict
   agents:
+    description: Ignored. Matches aknochow.cursor.agent.
     type: dict
   setting_sources:
+    description: Ignored. Matches aknochow.cursor.agent.
     type: list
     elements: str
+  mode:
+    description: Ignored. Matches aknochow.cursor.agent.
+    type: str
+  bridge_timeout:
+    description: Ignored. Matches aknochow.cursor.agent.
+    type: float
   api_key:
+    description: Ignored. Matches aknochow.cursor.agent.
     type: str
   cwd:
+    description: Ignored. Matches aknochow.cursor.agent.
     type: path
     required: true
 """

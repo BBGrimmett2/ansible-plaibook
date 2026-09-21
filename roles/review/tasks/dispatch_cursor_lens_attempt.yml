@@ -9,7 +9,8 @@
 # Vars: cursor_lens_agent_id, cursor_lens_description, cursor_lens_prompt,
 # cursor_lens_schema, cursor_lens_tool_description, cursor_nonce_lens_label,
 # cursor_lens_valid_var, cursor_lens_args_var, cursor_lens_fail_var,
-# cursor_lens_raw_var, cursor_lens_stats_name, cursor_lens_attempt_number
+# cursor_lens_raw_var, cursor_lens_stats_name, cursor_lens_attempt_number,
+# cursor_agent_module (optional; default aknochow.cursor.agent)
 
 - name: "Cursor: dispatch {{ cursor_nonce_lens_label }} attempt {{ cursor_lens_attempt_number }} of {{ review_structured_output_max_attempts }}"
   when: not (lookup('vars', cursor_lens_valid_var) | default(false) | bool)
@@ -23,7 +24,8 @@
           (agent_family=cursor)
 
     - name: "Cursor: dispatch the {{ cursor_nonce_lens_label }} agent"
-      aknochow.cursor.agent:
+      action:
+        module: "{{ cursor_agent_module | default('aknochow.cursor.agent') }}"
         api_key: "{{ review_cursor_api_key }}"
         prompt: >-
           Spawn the {{ cursor_lens_agent_id }} subagent with the Task / Subagent tool.

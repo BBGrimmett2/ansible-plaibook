@@ -32,14 +32,16 @@ PLAYBOOKS=(
 echo "Running ${#PLAYBOOKS[@]} offline Ansible playbook test(s)..."
 
 # dispatch_cursor_lens_attempt.yml calls aknochow.cursor.agent. The
-# named-lens retry playbook stubs that module (no live Cursor) by
-# putting tests/fixtures/stub_collections first on the collections path.
-STUB_COLLECTIONS="${REPO_ROOT}/tests/fixtures/stub_collections"
+# named-lens retry playbook swaps in tests/library/cursor_agent_stub.py
+# (no live Cursor) via ANSIBLE_LIBRARY + cursor_agent_module.
+STUB_LIBRARY="${REPO_ROOT}/tests/library"
+STUB_PAYLOAD="${TMPDIR:-/tmp}/ansible-plaibook-cursor-agent-stub.json"
 
 for pb in "${PLAYBOOKS[@]}"; do
   echo "--- Running ${pb} ---"
   if [[ "${pb}" == "tests/test_cursor_named_lens_retry.yml" ]]; then
-    ANSIBLE_COLLECTIONS_PATH="${STUB_COLLECTIONS}${ANSIBLE_COLLECTIONS_PATH:+:${ANSIBLE_COLLECTIONS_PATH}}" \
+    ANSIBLE_LIBRARY="${STUB_LIBRARY}${ANSIBLE_LIBRARY:+:${ANSIBLE_LIBRARY}}" \
+      CURSOR_AGENT_STUB_FILE="${STUB_PAYLOAD}" \
       ansible-playbook "${pb}"
   else
     ansible-playbook "${pb}"

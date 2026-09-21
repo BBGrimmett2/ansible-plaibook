@@ -13,11 +13,12 @@
 #   (8) fail_json parent-only through the same rescue does not bind and
 #       is not billed as a lens call
 #
-# (7) and (8) require tests/fixtures/stub_collections first on
-# ANSIBLE_COLLECTIONS_PATH (scripts/run_playbook_tests.sh does this).
+# (7) and (8) require tests/library/cursor_agent_stub.py on ANSIBLE_LIBRARY
+# and CURSOR_AGENT_STUB_FILE (scripts/run_playbook_tests.sh sets both).
 #
 # Usage:
-#   ANSIBLE_COLLECTIONS_PATH=$PWD/tests/fixtures/stub_collections${ANSIBLE_COLLECTIONS_PATH:+:$ANSIBLE_COLLECTIONS_PATH} \
+#   ANSIBLE_LIBRARY=$PWD/tests/library \
+#   CURSOR_AGENT_STUB_FILE=/tmp/ansible-plaibook-cursor-agent-stub.json \
 #     ansible-playbook tests/test_cursor_named_lens_retry.yml
 
 - name: "Cursor named-lens bind retries: miss is invalid attempt, sibling kept"
@@ -25,16 +26,14 @@
   connection: local
   gather_facts: false
 
-  environment:
-    CURSOR_AGENT_STUB_FILE: "{{ cursor_agent_stub_file }}"
-
   vars:
     review_prompt_nonce: "AbCdEfGh12345678"
     review_org_repo: aknochow/ansible-plaibook
     review_number: "63"
     review_repo_path: "{{ playbook_dir }}"
     review_cursor_api_key: stub-not-a-real-key
-    cursor_agent_stub_file: "{{ playbook_dir }}/../tmp/cursor_agent_stub.json"
+    cursor_agent_module: cursor_agent_stub
+    cursor_agent_stub_file: "{{ lookup('ansible.builtin.env', 'CURSOR_AGENT_STUB_FILE') | default('/tmp/ansible-plaibook-cursor-agent-stub.json', true) }}"
     _nested_lens_args:
       findings:
         - lens: Security
@@ -56,6 +55,9 @@
       findings: []
       scores: { quality: 80 }
       prompt_nonce: "AbCdEfGh12345678"
+
+  environment:
+    CURSOR_AGENT_STUB_FILE: "{{ cursor_agent_stub_file }}"
 
   tasks:
     - name: Ensure the cursor agent stub payload directory exists
@@ -354,6 +356,7 @@
             cursor_lens_fail_var: security_cursor_lens_last_fail
             cursor_lens_raw_var: _cursor_security_raw
             cursor_lens_stats_name: security
+            cursor_agent_module: cursor_agent_stub
 
         - name: Confirm rescue bound the nested execute and billed usage
           ansible.builtin.assert:
@@ -424,6 +427,7 @@
             cursor_lens_fail_var: security_cursor_lens_last_fail
             cursor_lens_raw_var: _cursor_security_raw
             cursor_lens_stats_name: security
+            cursor_agent_module: cursor_agent_stub
 
         - name: Confirm rescue did not bind or bill parent last-call
           ansible.builtin.assert:
