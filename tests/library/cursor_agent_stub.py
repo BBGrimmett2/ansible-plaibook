@@ -72,7 +72,7 @@ options:
 """
 
 
-def main():
+def main() -> None:
     module = AnsibleModule(
         argument_spec=dict(
             prompt=dict(type="str", required=True),
