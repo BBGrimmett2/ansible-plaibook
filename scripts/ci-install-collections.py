@@ -202,16 +202,16 @@ def install_git_sources(galaxy: str, dest: Path, cols: list[dict], token: str | 
 
 def install_galaxy_mirrors(galaxy: str, dest: Path, token: str | None) -> None:
     root = dest / "ansible_collections"
-    for fqn, (url, tag) in GALAXY_GITHUB_MIRRORS.items():
+    for fqn, (url, ref) in GALAXY_GITHUB_MIRRORS.items():
         ns, name = fqn.split(".", 1)
         marker = root / ns / name
         if (marker / "MANIFEST.json").is_file() or (marker / "galaxy.yml").is_file():
             print(f"GitHub fallback: {fqn} already present", flush=True)
             continue
-        print(f"GitHub fallback: {fqn} <- {url}@{tag}", flush=True)
+        print(f"GitHub fallback: {fqn} <- {url}@{ref}", flush=True)
         with tempfile.TemporaryDirectory(prefix="plaibook-coll-") as tmp:
             checkout = Path(tmp) / "collection"
-            _clone_at_ref(url, tag, checkout, token)
+            _clone_at_ref(url, ref, checkout, token)
             _install_from_dir(galaxy, checkout, dest)
 
 

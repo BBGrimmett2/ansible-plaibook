@@ -47,7 +47,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ${{ runner.temp }}/plaibook-collections
-          key: collections-${{ runner.os }}-${{ hashFiles('collections-requirements.yml', 'scripts/ci-install-collections.py') }}
+          key: collections-${{ runner.os }}-${{ hashFiles('collections-requirements.yml', 'scripts/ci-install-collections.py', 'plaibook/collections.py') }}
 
       - name: Install required collections
         env:
@@ -123,6 +123,7 @@ jobs:
       - name: pip install . with setuptools 68 and no build isolation
         run: |
           uv venv --python 3.10 .venv-legacy
-          uv pip install --python .venv-legacy/bin/python pip 'setuptools==68.0.0' wheel
+          uv pip install --python .venv-legacy/bin/python --require-hashes \
+            -r scripts/legacy-setuptools-requirements.txt
           .venv-legacy/bin/python -m pip install . --no-build-isolation
           .venv-legacy/bin/plai --version

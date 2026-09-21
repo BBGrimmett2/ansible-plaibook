@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from plaibook.collections import (
+    GALAXY_GITHUB_MIRRORS,
     CollectionInstallError,
     collection_is_installed,
     collection_key_from_requirement,
@@ -243,6 +246,25 @@ def test_requirement_collection_keys_maps_git_urls_and_fqcns(tmp_path):
     (posix / "MANIFEST.json").write_text("{}\n")
     assert collection_is_installed(dest, "ansible", "posix")
     assert not collection_is_installed(dest, "kubernetes", "core")
+
+
+def test_galaxy_github_mirrors_and_requirements_use_commit_shas():
+    sha = re.compile(r"^[0-9a-f]{40}$")
+    for fqn, (url, ref) in GALAXY_GITHUB_MIRRORS.items():
+        assert sha.match(ref), f"{fqn} pin {ref!r} is not a full commit SHA"
+        assert url.startswith("https://github.com/")
+    repo = Path(__file__).resolve().parents[1]
+    data = yaml.safe_load((repo / "collections-requirements.yml").read_bytes())
+    by_key = {}
+    for col in data["collections"]:
+        key = collection_key_from_requirement(col)
+        if key in (("community", "general"), ("kubernetes", "core"), ("ansible", "posix")):
+            version = str(col["version"])
+            assert sha.match(version), f"{key} version {version!r} is not a full commit SHA"
+            by_key[f"{key[0]}.{key[1]}"] = version
+    assert by_key["community.general"] == GALAXY_GITHUB_MIRRORS["community.general"][1]
+    assert by_key["kubernetes.core"] == GALAXY_GITHUB_MIRRORS["kubernetes.core"][1]
+    assert by_key["ansible.posix"] == GALAXY_GITHUB_MIRRORS["ansible.posix"][1]
 
 
 def test_ensure_collections_refuses_dangling_symlink_dest(tmp_path):

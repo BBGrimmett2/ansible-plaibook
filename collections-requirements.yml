@@ -31,15 +31,18 @@ collections:
     # main can silently change module arguments. SHA is ansible-cursor
     # cursor/fix-named-lens-stream-edab (WaitLiveRun / subagent tools).
     version: 7b487fd7571b1f17e160072bb4834d890d896591
-  # GitHub clones, not Galaxy FQCNs. First-run install uses git +
-  # ansible-galaxy install --no-deps and never calls galaxy.ansible.com
-  # (Python OpenSSL vs git's OS trust store on corporate Macs).
+  # GitHub clones, not Galaxy FQCNs. version is the commit SHA of a
+  # release tag (tags move). First-run install uses git + ansible-galaxy
+  # install --no-deps and never calls galaxy.ansible.com (Python OpenSSL
+  # vs git's OS trust store on corporate Macs). bump_collection_pins.py
+  # leaves ansible-collections pins alone; it only floats aknochow
+  # interface SHAs to default-branch HEAD.
   - name: https://github.com/ansible-collections/community.general.git
     type: git
-    version: "13.4.0"
+    version: 049524674b13ad9782849c427266935c8ec61954  # 13.4.0
   - name: https://github.com/ansible-collections/kubernetes.core.git
     type: git
-    version: "6.5.0"
+    version: 0f472b53e2ee73e11b5f9067ab0826d76183c157  # 6.5.0
   - name: https://github.com/ansible-collections/ansible.posix.git
     type: git
-    version: "2.2.2"
+    version: e98d9a0756458be1ac710988498000973889075c  # 2.2.2

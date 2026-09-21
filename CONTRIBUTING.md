@@ -32,9 +32,10 @@ uv run ansible-playbook review.yml --syntax-check  # Playbook syntax check
 ## Collection pins
 
 `collections-requirements.yml` is git sources (and GitHub mirrors for
-Galaxy FQCNs), floating `version: main` entries, and SHA pins for
+Galaxy FQCNs), floating `version: main` entries, SHA pins for
 provider collections whose module interface this repo calls
-(`aknochow.cursor`, `aknochow.openai`).
+(`aknochow.cursor`, `aknochow.openai`), and commit SHAs of ansible-collections
+release tags.
 Dependabot cannot update that file. After a sibling collection merge,
 either bump the SHA by hand or run:
 
@@ -44,8 +45,8 @@ uv run python scripts/bump_collection_pins.py --write
 
 `.github/workflows/bump-collection-pins.yml` does the same weekly (and
 on `workflow_dispatch`) and opens a PR. Floating `version: main` pins
-are left alone. Galaxy collections (`ansible.posix`, and the others) stay unpinned
-until they grow an explicit version.
+are left alone. ansible-collections release SHAs stay on the tagged
+commit — the bumper does not float those to default-branch HEAD.
 
 ## Commit Standards
 

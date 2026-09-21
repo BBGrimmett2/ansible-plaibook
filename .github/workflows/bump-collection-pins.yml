@@ -1,8 +1,9 @@
 name: Bump collection git pins
 
 # Dependabot cannot update collections-requirements.yml (no Ansible ecosystem).
-# This weekly job is the stand-in for SHA-pinned type: git collections.
-# Floating `version: main` entries are left alone.
+# This weekly job is the stand-in for aknochow SHA-pinned type: git
+# collections (openai / cursor interface pins). Floating `version: main`
+# entries and ansible-collections release SHAs are left alone.
 #
 # PRs opened with GITHUB_TOKEN do not trigger new workflow runs. This job
 # only rewrites SHAs; merge after a human retriggers CI or reviews the

@@ -32,26 +32,28 @@ ENV_COLLECTIONS_LEGACY = "ANSIBLE_COLLECTIONS_PATHS"
 GALAXY_TIMEOUT_SECONDS = 600
 
 # GitHub mirrors for FQCN rows and for galaxy.yml deps (community.general
-# pulls community.library_inventory_filtering_v1). First-run install
-# clones these with git (OS trust store) and ``ansible-galaxy install
-# --no-deps``. It never calls galaxy.ansible.com — Python's OpenSSL on
-# corporate Macs fails that API with ASN1 / NOT_ENOUGH_DATA.
+# pulls community.library_inventory_filtering_v1). Refs are commit SHAs of
+# the named release tags, not the tags themselves (tags move). First-run
+# install clones these with git (OS trust store) and ``ansible-galaxy
+# install --no-deps``. It never calls galaxy.ansible.com — Python's
+# OpenSSL on corporate Macs fails that API with ASN1 / NOT_ENOUGH_DATA.
+# bump_collection_pins.py does not float these to default-branch HEAD.
 GALAXY_GITHUB_MIRRORS: dict[str, tuple[str, str]] = {
     "ansible.posix": (
         "https://github.com/ansible-collections/ansible.posix.git",
-        "2.2.2",
+        "e98d9a0756458be1ac710988498000973889075c",  # 2.2.2
     ),
     "kubernetes.core": (
         "https://github.com/ansible-collections/kubernetes.core.git",
-        "6.5.0",
+        "0f472b53e2ee73e11b5f9067ab0826d76183c157",  # 6.5.0
     ),
     "community.general": (
         "https://github.com/ansible-collections/community.general.git",
-        "13.4.0",
+        "049524674b13ad9782849c427266935c8ec61954",  # 13.4.0
     ),
     "community.library_inventory_filtering_v1": (
         "https://github.com/ansible-collections/community.library_inventory_filtering.git",
-        "1.1.5",
+        "5f70dd8678885157cb186e8b64382a30cab3e12f",  # 1.1.5
     ),
 }
 
@@ -320,7 +322,7 @@ def install_galaxy_github_mirrors(
     needed: list[tuple[str, str]] | None = None,
 ) -> None:
     want = set(needed) if needed is not None else None
-    for fqn, (url, tag) in GALAXY_GITHUB_MIRRORS.items():
+    for fqn, (url, ref) in GALAXY_GITHUB_MIRRORS.items():
         ns, name = fqn.split(".", 1)
         if want is not None and (ns, name) not in want:
             continue
@@ -328,7 +330,7 @@ def install_galaxy_github_mirrors(
             continue
         with tempfile.TemporaryDirectory(prefix="plaibook-coll-") as tmp:
             checkout = Path(tmp) / "collection"
-            _clone_at_ref(url, tag, checkout)
+            _clone_at_ref(url, ref, checkout)
             _install_from_dir(galaxy, checkout, dest, env)
 
 

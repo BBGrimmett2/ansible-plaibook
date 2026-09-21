@@ -3,7 +3,10 @@
 
 Run with: python3 -m pytest scripts/test_bump_collection_pins.py
 """
+
 from __future__ import annotations
+
+from pathlib import Path
 
 from bump_collection_pins import (
     PinChange,
@@ -13,6 +16,8 @@ from bump_collection_pins import (
     parse_git_sha_pins,
     plan_changes,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 FIXTURE = """\
 ---
@@ -30,6 +35,9 @@ collections:
     version: 059daf017c0fcc406f35905b26688836255a925a
   - name: community.general
   - name: ansible.posix
+  - name: https://github.com/ansible-collections/community.general.git
+    type: git
+    version: 049524674b13ad9782849c427266935c8ec61954
 """
 
 
@@ -42,6 +50,12 @@ def test_parse_skips_branch_pins_and_galaxy_collections():
     ]
     assert pins[0].repo == "ansible-openai"
     assert pins[1].current == "059daf017c0fcc406f35905b26688836255a925a"
+
+
+def test_parse_skips_third_party_release_shas():
+    pins = parse_git_sha_pins(FIXTURE)
+    assert all(pin.owner == "aknochow" for pin in pins)
+    assert not any("ansible-collections" in pin.name for pin in pins)
 
 
 def test_apply_preserves_comments_and_floating_main():
@@ -69,6 +83,7 @@ def test_apply_preserves_comments_and_floating_main():
     assert "059daf017c0fcc406f35905b26688836255a925a" not in updated
     assert "0df6de7215c55aca40938a59fb700a18abe33dae" in updated
     assert "community.general" in updated
+    assert "049524674b13ad9782849c427266935c8ec61954" in updated
 
 
 def test_plan_changes_uses_injected_fetcher():
@@ -89,10 +104,7 @@ def test_plan_changes_uses_injected_fetcher():
 
 def test_abbreviated_pin_matching_full_sha_is_current():
     pins = parse_git_sha_pins(
-        "collections:\n"
-        "  - name: https://github.com/aknochow/ansible-cursor.git\n"
-        "    type: git\n"
-        "    version: 1d221ce\n"
+        "collections:\n  - name: https://github.com/aknochow/ansible-cursor.git\n    type: git\n    version: 1d221ce\n"
     )
     changes = plan_changes(
         pins,
@@ -139,3 +151,15 @@ def test_main_write_and_check(tmp_path, monkeypatch):
 def test_main_missing_file(tmp_path):
     missing = tmp_path / "nope.yml"
     assert main(["--file", str(missing)]) == 1
+
+
+def test_repo_requirements_only_bumps_aknochow_interface_pins():
+    pins = parse_git_sha_pins((REPO_ROOT / "collections-requirements.yml").read_text())
+    assert pins
+    assert {pin.owner for pin in pins} == {"aknochow"}
+    repos = {pin.repo for pin in pins}
+    assert "ansible-openai" in repos
+    assert "ansible-cursor" in repos
+    assert "community.general" not in repos
+    assert "kubernetes.core" not in repos
+    assert "ansible.posix" not in repos
