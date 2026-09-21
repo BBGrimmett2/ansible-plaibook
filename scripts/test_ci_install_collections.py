@@ -66,9 +66,10 @@ def test_git_auth_uses_header_not_url_password(monkeypatch, tmp_path):
     monkeypatch.setattr(mod.subprocess, "run", fake_run)
     mod._git(["status"], cwd=tmp_path, token="ghs_testtoken")
     joined = " ".join(recorded["cmd"])
-    assert "x-access-token" not in joined
     assert "ghs_testtoken@" not in joined
-    assert "AUTHORIZATION: bearer ghs_testtoken" in joined
+    assert "insteadOf" not in joined
+    assert "bearer" not in joined.lower()
+    assert "AUTHORIZATION: basic" in joined
     assert recorded["kwargs"]["timeout"] == GALAXY_TIMEOUT_SECONDS
 
 

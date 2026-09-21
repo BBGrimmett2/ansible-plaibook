@@ -8,6 +8,7 @@ build`` then ``install --no-deps``. Same GitHub-first path as
 
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import subprocess
@@ -90,8 +91,11 @@ def _git_token() -> str | None:
 def _git(args: list[str], *, cwd: Path | None = None, token: str | None) -> None:
     cmd = ["git", "-c", "advice.detachedHead=false"]
     if token:
-        # Authorization header, not a password in the clone URL.
-        cmd += ["-c", f"http.extraHeader=AUTHORIZATION: bearer {token}"]
+        # actions/checkout wire format: Basic, not Bearer. A Bearer header
+        # makes GitHub prompt for a username and public clones fail closed
+        # on Actions. Keep the token out of the clone URL (gitleaks).
+        basic = base64.b64encode(b"x-access-token:" + token.encode("ascii")).decode("ascii")
+        cmd += ["-c", f"http.https://github.com/.extraHeader=AUTHORIZATION: basic {basic}"]
     cmd += args
     subprocess.run(cmd, cwd=cwd, check=True, timeout=GALAXY_TIMEOUT_SECONDS)
 
