@@ -12,6 +12,7 @@ export ANSIBLE_CONFIG="${REPO_ROOT}/ansible.cfg"
 PLAYBOOKS=(
   "tests/test_checklist_execution.yml"
   "tests/test_cursor_named_lens_retry.yml"
+  "tests/test_cursor_lens_attempt_usage.yml"
   "tests/test_cursor_prompt_nonce.yml"
   "tests/test_guardian_not_installed.yml"
   "tests/test_guardian_scan.yml"

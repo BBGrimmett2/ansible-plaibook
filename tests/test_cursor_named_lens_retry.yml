@@ -9,6 +9,8 @@
 #   (6) nonce mismatch → invalid attempt, no .text in fail_msg
 #   (7) fail_json-shaped result with nested execute still binds
 #       (WaitLiveRun-after-drain used to throw that payload away)
+# Parent-only failed-return usage is not a lens call; that contract is
+# tests/test_cursor_lens_attempt_usage.yml.
 #
 # Usage:
 #   ansible-playbook tests/test_cursor_named_lens_retry.yml
