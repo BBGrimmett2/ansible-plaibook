@@ -6,7 +6,10 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
+import shutil
 import subprocess
+import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, TextIO
@@ -27,6 +30,30 @@ LOCK_NAME = "collections.lock"
 ENV_COLLECTIONS = "ANSIBLE_COLLECTIONS_PATH"
 ENV_COLLECTIONS_LEGACY = "ANSIBLE_COLLECTIONS_PATHS"
 GALAXY_TIMEOUT_SECONDS = 600
+
+# Unpinned Galaxy FQCNs (and community.general's declared dep). Tags
+# match scripts/ci-install-collections.py. First-run `ansible-galaxy -r`
+# talks to galaxy.ansible.com over Python's OpenSSL; git clones use the
+# OS trust store. Corporate Macs often fail the former (ASN1 /
+# NOT_ENOUGH_DATA) after git collections already succeeded.
+GALAXY_GITHUB_MIRRORS: dict[str, tuple[str, str]] = {
+    "ansible.posix": (
+        "https://github.com/ansible-collections/ansible.posix.git",
+        "2.2.2",
+    ),
+    "kubernetes.core": (
+        "https://github.com/ansible-collections/kubernetes.core.git",
+        "6.5.0",
+    ),
+    "community.general": (
+        "https://github.com/ansible-collections/community.general.git",
+        "13.4.0",
+    ),
+    "community.library_inventory_filtering_v1": (
+        "https://github.com/ansible-collections/community.library_inventory_filtering.git",
+        "1.1.5",
+    ),
+}
 
 
 class CollectionInstallError(RuntimeError):
@@ -139,6 +166,17 @@ def requirement_collection_keys(requirements: Path) -> list[tuple[str, str]]:
     return keys
 
 
+def _runtime_required_keys(required: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Include GitHub-mirror deps that Galaxy would have pulled."""
+    keys = list(required)
+    seen = set(keys)
+    if ("community", "general") in seen:
+        extra = ("community", "library_inventory_filtering_v1")
+        if extra not in seen:
+            keys.append(extra)
+    return keys
+
+
 def collection_is_installed(dest: Path, ns: str, name: str) -> bool:
     coll = dest / "ansible_collections" / ns / name
     return (coll / "MANIFEST.json").is_file() or (coll / "galaxy.yml").is_file()
@@ -154,9 +192,144 @@ def _cache_matches(dest: Path, digest: str, required: list[tuple[str, str]]) -> 
         return False
     if stamp.read_text(encoding="utf-8").strip() != digest:
         return False
-    if not required:
+    check = _runtime_required_keys(required)
+    if not check:
         return True
-    return _all_required_installed(dest, required)
+    return _all_required_installed(dest, check)
+
+
+def _galaxy_env(home: Path | None, extra: dict[str, str] | None) -> dict[str, str]:
+    merged = os.environ.copy()
+    if extra:
+        merged.update(extra)
+    merge_collections_path(merged, home=home)
+    _quiet_git_env(merged)
+    merged.setdefault("GIT_TERMINAL_PROMPT", "0")
+    merged.setdefault("ANSIBLE_FORCE_COLOR", "0")
+    return merged
+
+
+def _clone_at_ref(url: str, ref: str, dest: Path) -> None:
+    last_error: Exception | None = None
+    for attempt in range(1, 4):
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.mkdir(parents=True)
+        try:
+            subprocess.run(
+                ["git", "-c", "advice.detachedHead=false", "init", "-b", "main"],
+                cwd=dest,
+                check=True,
+                timeout=GALAXY_TIMEOUT_SECONDS,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["git", "remote", "add", "origin", url],
+                cwd=dest,
+                check=True,
+                timeout=GALAXY_TIMEOUT_SECONDS,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["git", "-c", "advice.detachedHead=false", "fetch", "--depth", "1", "origin", ref],
+                cwd=dest,
+                check=True,
+                timeout=GALAXY_TIMEOUT_SECONDS,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["git", "-c", "advice.detachedHead=false", "checkout", "FETCH_HEAD"],
+                cwd=dest,
+                check=True,
+                timeout=GALAXY_TIMEOUT_SECONDS,
+                capture_output=True,
+                text=True,
+            )
+            return
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+            last_error = exc
+            time.sleep(attempt * 4)
+    raise CollectionInstallError(f"git fetch failed for {url}@{ref}: {last_error}")
+
+
+def _install_from_dir(
+    galaxy: str, source: Path, dest: Path, env: dict[str, str]
+) -> None:
+    completed = subprocess.run(
+        [
+            galaxy,
+            "collection",
+            "install",
+            str(source),
+            "-p",
+            str(dest),
+            "--force",
+            "--no-deps",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=GALAXY_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise CollectionInstallError(
+            f"ansible-galaxy install {source} --no-deps failed"
+            + (f":\n{detail}" if detail else ".")
+        )
+
+
+def _load_requirement_rows(requirements: Path) -> list[dict]:
+    data = yaml.safe_load(requirements.read_bytes()) or {}
+    cols = data.get("collections") or []
+    if not isinstance(cols, list):
+        return []
+    return [col for col in cols if isinstance(col, dict)]
+
+
+def install_git_sources(
+    galaxy: str,
+    dest: Path,
+    cols: list[dict],
+    env: dict[str, str],
+) -> None:
+    for col in cols:
+        name = col.get("name")
+        if not isinstance(name, str):
+            continue
+        is_git = col.get("type") == "git" or name.startswith(("https://", "http://", "git+", "git@"))
+        if not is_git:
+            continue
+        url = name.removeprefix("git+")
+        ref = str(col.get("version") or "HEAD")
+        with tempfile.TemporaryDirectory(prefix="plaibook-coll-") as tmp:
+            checkout = Path(tmp) / "collection"
+            _clone_at_ref(url, ref, checkout)
+            _install_from_dir(galaxy, checkout, dest, env)
+
+
+def install_galaxy_github_mirrors(
+    galaxy: str,
+    dest: Path,
+    env: dict[str, str],
+    *,
+    needed: list[tuple[str, str]] | None = None,
+) -> None:
+    want = set(needed) if needed is not None else None
+    for fqn, (url, tag) in GALAXY_GITHUB_MIRRORS.items():
+        ns, name = fqn.split(".", 1)
+        if want is not None and (ns, name) not in want:
+            continue
+        if collection_is_installed(dest, ns, name):
+            continue
+        with tempfile.TemporaryDirectory(prefix="plaibook-coll-") as tmp:
+            checkout = Path(tmp) / "collection"
+            _clone_at_ref(url, tag, checkout)
+            _install_from_dir(galaxy, checkout, dest, env)
 
 
 def ensure_collections(
@@ -224,13 +397,8 @@ def ensure_collections(
                 str(dest),
                 "--force",
             ]
-            merged = os.environ.copy()
-            if env:
-                merged.update(env)
-            merge_collections_path(merged, home=home)
-            _quiet_git_env(merged)
-            merged.setdefault("GIT_TERMINAL_PROMPT", "0")
-            merged.setdefault("ANSIBLE_FORCE_COLOR", "0")
+            merged = _galaxy_env(home, env)
+            galaxy = command[0]
             completed = subprocess.run(
                 command,
                 env=merged,
@@ -249,10 +417,43 @@ def ensure_collections(
                 f"ansible-galaxy timed out after {GALAXY_TIMEOUT_SECONDS}s installing "
                 f"collections into {dest}."
             ) from exc
-        if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "").strip()
+        needed = _runtime_required_keys(required)
+        if completed.returncode == 0:
+            stamp.write_text(digest + "\n", encoding="utf-8")
+            return dest
+
+        detail = (completed.stderr or completed.stdout or "").strip()
+        if not required:
             raise CollectionInstallError(
                 f"ansible-galaxy failed installing collections into {dest}"
+                + (f":\n{detail}" if detail else ".")
+            )
+        if stderr is not None:
+            stderr.write(
+                "Galaxy install failed; installing collections from GitHub "
+                "(no galaxy.ansible.com)…\n"
+            )
+            stderr.flush()
+        try:
+            cols = _load_requirement_rows(requirements)
+            install_git_sources(galaxy, dest, cols, merged)
+            install_galaxy_github_mirrors(galaxy, dest, merged, needed=needed)
+        except CollectionInstallError:
+            raise
+        except Exception as exc:
+            raise CollectionInstallError(
+                f"GitHub collection fallback failed after Galaxy error into {dest}: {exc}"
+                + (f"\nGalaxy was:\n{detail}" if detail else ".")
+            ) from exc
+        if not _all_required_installed(dest, needed):
+            missing = [
+                f"{ns}.{name}"
+                for ns, name in needed
+                if not collection_is_installed(dest, ns, name)
+            ]
+            raise CollectionInstallError(
+                f"ansible-galaxy failed installing collections into {dest}; "
+                f"GitHub fallback still missing {', '.join(missing)}"
                 + (f":\n{detail}" if detail else ".")
             )
         stamp.write_text(digest + "\n", encoding="utf-8")

@@ -24,34 +24,13 @@ from pathlib import Path
 import yaml
 
 from plaibook.collections import (
+    GALAXY_GITHUB_MIRRORS,
     GALAXY_TIMEOUT_SECONDS,
     collection_is_installed,
     requirement_collection_keys,
 )
 
 REQUIREMENTS = Path("collections-requirements.yml")
-
-# Unpinned Galaxy names in collections-requirements.yml, plus the one
-# dependency community.general 13.x declares. Tags match what a working
-# Galaxy install currently resolves to; bump here when CI fallback drifts.
-GALAXY_GITHUB_MIRRORS: dict[str, tuple[str, str]] = {
-    "ansible.posix": (
-        "https://github.com/ansible-collections/ansible.posix.git",
-        "2.2.2",
-    ),
-    "kubernetes.core": (
-        "https://github.com/ansible-collections/kubernetes.core.git",
-        "6.5.0",
-    ),
-    "community.general": (
-        "https://github.com/ansible-collections/community.general.git",
-        "13.4.0",
-    ),
-    "community.library_inventory_filtering_v1": (
-        "https://github.com/ansible-collections/community.library_inventory_filtering.git",
-        "1.1.5",
-    ),
-}
 
 
 def _dest() -> Path:

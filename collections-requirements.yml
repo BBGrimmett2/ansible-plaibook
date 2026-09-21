@@ -31,12 +31,16 @@ collections:
     # main can silently change module arguments. SHA is ansible-cursor
     # cursor/fix-named-lens-stream-edab (WaitLiveRun / subagent tools).
     version: 7b487fd7571b1f17e160072bb4834d890d896591
-  # community.general.jira — the native Jira module bug_context uses
-  # to fetch/comment on tickets, replacing hand-rolled ansible.builtin.uri
-  # calls against the REST API directly.
-  - name: community.general
-  # kubernetes.core.k8s_info — roles/review/tasks/fetch_k8s_secret_tls.yml's
-  # sandbox_tls_source: k8s_secret path (AAP unattended automation).
-  - name: kubernetes.core
-  # ansible.posix.profile_tasks and ansible.posix.timer callbacks in ansible.cfg.
-  - name: ansible.posix
+  # GitHub clones, not Galaxy FQCNs. ansible-galaxy -r still resolves
+  # galaxy.yml deps against galaxy.ansible.com; first-run install falls
+  # back to --no-deps git mirrors when that TLS call fails (common on
+  # corporate Macs: Python OpenSSL vs git's OS trust store).
+  - name: https://github.com/ansible-collections/community.general.git
+    type: git
+    version: "13.4.0"
+  - name: https://github.com/ansible-collections/kubernetes.core.git
+    type: git
+    version: "6.5.0"
+  - name: https://github.com/ansible-collections/ansible.posix.git
+    type: git
+    version: "2.2.2"

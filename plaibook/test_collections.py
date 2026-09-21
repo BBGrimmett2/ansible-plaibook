@@ -324,6 +324,53 @@ def test_ensure_collections_surfaces_galaxy_failure(tmp_path, monkeypatch):
         ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
 
 
+def test_ensure_collections_falls_back_to_github_when_galaxy_tls_fails(tmp_path, monkeypatch):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text(
+        "collections:\n  - name: community.general\n"
+    )
+    home = tmp_path / "home"
+    err = []
+
+    class Err:
+        def write(self, text):
+            err.append(text)
+
+        def flush(self):
+            pass
+
+    def fake_run(cmd, **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="ERROR! Unknown error when attempting to call Galaxy at "
+            "'https://galaxy.ansible.com/api/': [ASN1: NOT_ENOUGH_DATA]",
+        )
+
+    def fake_git(galaxy, dest, cols, env):
+        coll = dest / "ansible_collections" / "community" / "general"
+        coll.mkdir(parents=True)
+        (coll / "MANIFEST.json").write_text("{}\n")
+
+    def fake_mirrors(galaxy, dest, env, needed=None):
+        coll = dest / "ansible_collections" / "community" / "library_inventory_filtering_v1"
+        coll.mkdir(parents=True)
+        (coll / "MANIFEST.json").write_text("{}\n")
+
+    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    monkeypatch.setattr("plaibook.collections.install_git_sources", fake_git)
+    monkeypatch.setattr("plaibook.collections.install_galaxy_github_mirrors", fake_mirrors)
+    dest = ensure_collections(
+        playbook, home=home, galaxy_bin="ansible-galaxy", stderr=Err()
+    )
+    assert dest == collections_dir(home)
+    assert "GitHub" in "".join(err)
+    assert collection_is_installed(dest, "community", "general")
+    assert collection_is_installed(dest, "community", "library_inventory_filtering_v1")
+    assert (dest / ".requirements.sha256").is_file()
+
+
 def test_merge_collections_path_puts_cache_first(tmp_path):
     home = tmp_path / "home"
     isolated = str(collections_dir(home))
