@@ -303,18 +303,19 @@ def _clone_at_ref(url: str, ref: str, dest: Path) -> None:
     raise CollectionInstallError(f"git fetch failed for {url}@{sha}: {last_error}")
 
 
-def _install_from_dir(galaxy: str, source: Path, dest: Path, env: dict[str, str]) -> None:
+def _build_collection_archive(galaxy: str, source: Path, output_dir: Path, env: dict[str, str]) -> Path:
+    """Turn a galaxy.yml checkout into the .tar.gz ansible-galaxy install expects."""
+    output_dir.mkdir(parents=True, exist_ok=True)
     completed = subprocess.run(
         [
             galaxy,
             "collection",
-            "install",
-            str(source),
-            "-p",
-            str(dest),
+            "build",
             "--force",
-            "--no-deps",
+            "--output-path",
+            str(output_dir),
         ],
+        cwd=source,
         env=env,
         capture_output=True,
         text=True,
@@ -324,7 +325,40 @@ def _install_from_dir(galaxy: str, source: Path, dest: Path, env: dict[str, str]
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
         raise CollectionInstallError(
-            f"ansible-galaxy install {source} --no-deps failed" + (f":\n{detail}" if detail else ".")
+            f"ansible-galaxy collection build {source} failed" + (f":\n{detail}" if detail else ".")
+        )
+    archives = sorted(output_dir.glob("*.tar.gz"))
+    if len(archives) != 1:
+        raise CollectionInstallError(
+            f"ansible-galaxy collection build {source} produced {len(archives)} archives, expected 1"
+        )
+    return archives[0]
+
+
+def _install_from_dir(galaxy: str, source: Path, dest: Path, env: dict[str, str]) -> None:
+    with tempfile.TemporaryDirectory(prefix="plaibook-coll-build-") as tmp:
+        archive = _build_collection_archive(galaxy, source, Path(tmp), env)
+        completed = subprocess.run(
+            [
+                galaxy,
+                "collection",
+                "install",
+                str(archive),
+                "-p",
+                str(dest),
+                "--force",
+                "--no-deps",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=GALAXY_TIMEOUT_SECONDS,
+            check=False,
+        )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise CollectionInstallError(
+            f"ansible-galaxy install {archive} --no-deps failed" + (f":\n{detail}" if detail else ".")
         )
 
 

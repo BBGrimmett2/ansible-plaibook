@@ -33,7 +33,28 @@ def test_repo_requirements_keys_are_named_not_a_raw_count():
     assert len(keys) == 8
 
 
-def test_install_from_dir_passes_galaxy_timeout(monkeypatch, tmp_path):
+def test_install_from_dir_builds_then_installs_archive(monkeypatch, tmp_path):
+    import plaibook.collections as coll
+
+    mod = _load_ci_install()
+    timeouts = []
+
+    def fake_run(cmd, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        if "build" in cmd:
+            out = Path(cmd[cmd.index("--output-path") + 1])
+            (out / "ns-name-1.0.0.tar.gz").write_bytes(b"x")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(coll.subprocess, "run", fake_run)
+    src = tmp_path / "src"
+    src.mkdir()
+    mod._install_from_dir("ansible-galaxy", src, tmp_path / "dest")
+    assert timeouts
+    assert all(t == GALAXY_TIMEOUT_SECONDS for t in timeouts)
+
+
+def test_git_auth_uses_header_not_url_password(monkeypatch, tmp_path):
     mod = _load_ci_install()
     recorded = {}
 
@@ -43,21 +64,11 @@ def test_install_from_dir_passes_galaxy_timeout(monkeypatch, tmp_path):
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(mod.subprocess, "run", fake_run)
-    mod._install_from_dir("ansible-galaxy", tmp_path / "src", tmp_path / "dest")
-    assert recorded["kwargs"]["timeout"] == GALAXY_TIMEOUT_SECONDS
-
-
-def test_try_requirements_file_passes_galaxy_timeout(monkeypatch, tmp_path):
-    mod = _load_ci_install()
-    recorded = {}
-
-    def fake_run(cmd, **kwargs):
-        recorded["kwargs"] = kwargs
-        return SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
-    monkeypatch.delenv("PLAIBOOK_CI_SKIP_GALAXY", raising=False)
-    assert mod.try_requirements_file("ansible-galaxy", tmp_path / "dest") is True
+    mod._git(["status"], cwd=tmp_path, token="ghs_testtoken")
+    joined = " ".join(recorded["cmd"])
+    assert "x-access-token" not in joined
+    assert "ghs_testtoken@" not in joined
+    assert "AUTHORIZATION: bearer ghs_testtoken" in joined
     assert recorded["kwargs"]["timeout"] == GALAXY_TIMEOUT_SECONDS
 
 
@@ -79,3 +90,8 @@ def test_required_keys_include_mirror_dependency():
     keys = mod._required_keys()
     assert ("community", "library_inventory_filtering_v1") in keys
     assert ("ansible", "posix") in keys
+
+
+def test_ci_installer_has_no_galaxy_requirements_path():
+    mod = _load_ci_install()
+    assert not hasattr(mod, "try_requirements_file")

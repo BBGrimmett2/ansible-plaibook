@@ -26,6 +26,8 @@ from plaibook.collections import (
 )
 from plaibook.playbook import run_ansible_playbook
 
+GIT_TEST_TIMEOUT = 30
+
 
 def _plant(dest, *keys):
     for ns, name in keys:
@@ -437,6 +439,10 @@ def test_ensure_collections_installs_git_sources_with_no_deps(tmp_path, monkeypa
     def fake_run(cmd, **kwargs):
         calls.append(list(cmd))
         assert "-r" not in cmd
+        if cmd[:3] == ["ansible-galaxy", "collection", "build"]:
+            out = Path(cmd[cmd.index("--output-path") + 1])
+            (out / "example-posix-1.0.0.tar.gz").write_bytes(b"archive")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
         dest = Path(cmd[cmd.index("-p") + 1])
         _plant(dest, ("example", "posix"))
         return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -446,8 +452,12 @@ def test_ensure_collections_installs_git_sources_with_no_deps(tmp_path, monkeypa
     dest = ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
     assert dest == collections_dir(home)
     assert calls
-    assert all(c[:3] == ["ansible-galaxy", "collection", "install"] for c in calls)
-    assert all("--no-deps" in c for c in calls)
+    builds = [c for c in calls if c[:3] == ["ansible-galaxy", "collection", "build"]]
+    installs = [c for c in calls if c[:3] == ["ansible-galaxy", "collection", "install"]]
+    assert builds
+    assert installs
+    assert all(str(c[3]).endswith(".tar.gz") for c in installs)
+    assert all("--no-deps" in c for c in installs)
     assert collection_is_installed(dest, "example", "posix")
 
 
@@ -699,13 +709,26 @@ def test_ensure_collections_serializes_two_processes(tmp_path):
         "namespace: example\nname: posix\nversion: 1.0.0\nreadme: README.md\nauthors: [test]\n"
     )
     (src / "README.md").write_text("test\n")
-    subprocess.run(["git", "init", "-b", "main"], cwd=src, check=True, capture_output=True)
-    subprocess.run(["git", "add", "."], cwd=src, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=src,
+        check=True,
+        capture_output=True,
+        timeout=GIT_TEST_TIMEOUT,
+    )
+    subprocess.run(
+        ["git", "add", "."],
+        cwd=src,
+        check=True,
+        capture_output=True,
+        timeout=GIT_TEST_TIMEOUT,
+    )
     subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
         cwd=src,
         check=True,
         capture_output=True,
+        timeout=GIT_TEST_TIMEOUT,
     )
 
     sha = subprocess.run(
@@ -714,6 +737,7 @@ def test_ensure_collections_serializes_two_processes(tmp_path):
         check=True,
         capture_output=True,
         text=True,
+        timeout=GIT_TEST_TIMEOUT,
     ).stdout.strip()
 
     playbook = tmp_path / "playbook"
@@ -732,6 +756,10 @@ def test_ensure_collections_serializes_two_processes(tmp_path):
         f"log = pathlib.Path({str(log)!r})\n"
         f"release = pathlib.Path({str(release)!r})\n"
         "args = sys.argv\n"
+        "if 'build' in args:\n"
+        "    out = pathlib.Path(args[args.index('--output-path') + 1])\n"
+        "    (out / 'example-posix-1.0.0.tar.gz').write_bytes(b'archive')\n"
+        "    sys.exit(0)\n"
         "dest = pathlib.Path(args[args.index('-p') + 1])\n"
         "coll = dest / 'ansible_collections' / 'example' / 'posix'\n"
         "with log.open('a') as fh:\n"
