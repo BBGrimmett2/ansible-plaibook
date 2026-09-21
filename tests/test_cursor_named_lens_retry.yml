@@ -429,11 +429,15 @@
               - (_cursor_security_raw.stub | default(false) | bool)
               - not (security_cursor_lens_valid | bool)
               - pipeline_agent_calls | length == 0
-              - "'parent' in (security_cursor_lens_last_fail | default('') | lower)"
               - "'.text' not in (security_cursor_lens_last_fail | default(''))"
               - "'SECRET_DRAFT_MUST_NOT_APPEAR' not in (security_cursor_lens_last_fail | default(''))"
+              - >-
+                  'parent' in (security_cursor_lens_last_fail | default('') | lower)
+                  or 'status error' in (security_cursor_lens_last_fail | default('') | lower)
             fail_msg: >-
               Parent-only fail_json must not bind or land in pipeline_agent_calls.
+              Rescue skips bind, so fail_msg is the module status=error
+              (not the bind-time parent-only sentence).
               valid={{ security_cursor_lens_valid | default('') }}
               calls={{ pipeline_agent_calls | default([]) }}
               fail={{ security_cursor_lens_last_fail | default('') }}

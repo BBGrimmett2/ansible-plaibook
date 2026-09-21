@@ -54,7 +54,14 @@ run_playbook() {
   cat "${out}"
   if [[ "${rc}" -ne 0 ]]; then
     local snippet
-    snippet="$(python3 -c 'import pathlib,sys; t=pathlib.Path(sys.argv[1]).read_text(errors="replace")[-2000:]; print(t.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))' "${out}")"
+    snippet="$(python3 -c '
+import pathlib, re, sys
+t = pathlib.Path(sys.argv[1]).read_text(errors="replace")
+lines = t.splitlines()
+picked = [ln for ln in lines if re.search(r"fatal:|FAILED!|fail_msg|Assertion|origin:", ln)]
+blob = "\n".join(picked[-40:] if picked else lines[-40:])
+print(blob.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
+' "${out}")
     echo "::error file=${pb},title=Playbook test failed::${snippet}"
     rm -f "${out}"
     return "${rc}"
