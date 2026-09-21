@@ -7,21 +7,34 @@
 #   (4) miss then nested → retry binds
 #   (5) Security bound + Review miss → sibling args kept, play continues
 #   (6) nonce mismatch → invalid attempt, no .text in fail_msg
-#   (7) fail_json-shaped result with nested execute still binds
-#       (WaitLiveRun-after-drain used to throw that payload away)
-# Parent-only failed-return usage is not a lens call; that contract is
-# tests/test_cursor_lens_attempt_usage.yml.
+#   (7) fail_json nested execute through dispatch_cursor_lens_attempt
+#       rescue still binds and bills (WaitLiveRun-after-drain used to
+#       throw that payload away)
+#   (8) fail_json parent-only through the same rescue does not bind and
+#       is not billed as a lens call
+#
+# (7) and (8) require tests/fixtures/stub_collections first on
+# ANSIBLE_COLLECTIONS_PATH (scripts/run_playbook_tests.sh does this).
 #
 # Usage:
-#   ansible-playbook tests/test_cursor_named_lens_retry.yml
+#   ANSIBLE_COLLECTIONS_PATH=$PWD/tests/fixtures/stub_collections${ANSIBLE_COLLECTIONS_PATH:+:$ANSIBLE_COLLECTIONS_PATH} \
+#     ansible-playbook tests/test_cursor_named_lens_retry.yml
 
 - name: "Cursor named-lens bind retries: miss is invalid attempt, sibling kept"
   hosts: localhost
   connection: local
   gather_facts: false
 
+  environment:
+    CURSOR_AGENT_STUB_FILE: "{{ cursor_agent_stub_file }}"
+
   vars:
     review_prompt_nonce: "AbCdEfGh12345678"
+    review_org_repo: aknochow/ansible-plaibook
+    review_number: "63"
+    review_repo_path: "{{ playbook_dir }}"
+    review_cursor_api_key: stub-not-a-real-key
+    cursor_agent_stub_file: "{{ playbook_dir }}/../tmp/cursor_agent_stub.json"
     _nested_lens_args:
       findings:
         - lens: Security
@@ -45,6 +58,12 @@
       prompt_nonce: "AbCdEfGh12345678"
 
   tasks:
+    - name: Ensure the cursor agent stub payload directory exists
+      ansible.builtin.file:
+        path: "{{ cursor_agent_stub_file | dirname }}"
+        state: directory
+        mode: "0700"
+
     - name: Nested execute must bind
       block:
         - name: Reset Security bind flags
@@ -285,41 +304,139 @@
               Got: {{ security_cursor_lens_last_fail | default('') }}
             success_msg: "Nonce mismatch is an invalid attempt, without printing .text."
 
-    - name: Failed module return with nested execute must still bind
+    - name: Failed module return with nested execute must still bind and bill
       block:
-        - name: Reset failed-return bind flags
+        - name: Reset failed-return bind flags and billed usage
           ansible.builtin.set_fact:
             security_cursor_lens_valid: false
             _cursor_security_lens: {}
+            _cursor_security_raw: {}
+            pipeline_agent_calls: []
 
-        - name: Bind nested execute from a fail_json-shaped Cursor result
-          ansible.builtin.include_role:
-            name: review
-            tasks_from: bind_cursor_named_lens
+        - name: Write fail_json nested-execute stub payload
+          ansible.builtin.copy:
+            dest: "{{ cursor_agent_stub_file }}"
+            mode: "0600"
+            content: "{{ _nested_fail_stub | to_json }}"
           vars:
-            cursor_raw:
+            _nested_fail_stub:
               failed: true
               msg: "Cursor run finished with status error (run_id=run-1)"
               status: error
+              resolved_model: gpt-5.6-luna
               usage_normalized:
                 input_tokens: 10
                 output_tokens: 2
+                cache_write_tokens: 0
+                cache_read_tokens: 0
+                thinking_tokens: 0
+                total_tokens: 12
               structured_tool_calls:
                 - name: report_findings
                   caller: nested
                   agent_id:
                   args: "{{ _nested_lens_args }}"
+
+        - name: Dispatch the fail_json nested execute through attempt rescue
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: dispatch_cursor_lens_attempt
+          vars:
+            cursor_lens_attempt_number: 1
+            cursor_lens_agent_id: security_lens
+            cursor_lens_description: stub security lens
+            cursor_lens_prompt: stub security prompt
+            cursor_lens_schema: { type: object }
+            cursor_lens_tool_description: Submit the security findings.
             cursor_nonce_lens_label: "Security lens"
-            cursor_lens_tool: report_findings
             cursor_lens_valid_var: security_cursor_lens_valid
             cursor_lens_args_var: _cursor_security_lens
             cursor_lens_fail_var: security_cursor_lens_last_fail
+            cursor_lens_raw_var: _cursor_security_raw
+            cursor_lens_stats_name: security
 
-        - name: Confirm nested execute bound from the failed return
+        - name: Confirm rescue bound the nested execute and billed usage
           ansible.builtin.assert:
             that:
+              - (_cursor_security_raw.stub | default(false) | bool)
               - security_cursor_lens_valid | bool
               - _cursor_security_lens.findings[0].file == "lens.py"
               - _cursor_security_lens.scores.security == 10
-            fail_msg: "A fail_json-shaped result with nested execute must still bind."
-            success_msg: "Nested execute bound from a failed module return."
+              - pipeline_agent_calls | length == 1
+              - pipeline_agent_calls[0].lens == "security"
+              - pipeline_agent_calls[0].usage.input_tokens | int == 10
+              - pipeline_agent_calls[0].attempt | int == 1
+              - pipeline_agent_calls[0].model == "gpt-5.6-luna"
+            fail_msg: >-
+              dispatch_cursor_lens_attempt rescue must bind nested execute
+              and append billed usage. valid={{ security_cursor_lens_valid | default('') }}
+              calls={{ pipeline_agent_calls | default([]) }}
+            success_msg: "Rescue bound nested execute from fail_json and billed usage."
+
+    - name: Failed parent-only return must not bind or bill as a lens call
+      block:
+        - name: Reset parent-only failed-return flags
+          ansible.builtin.set_fact:
+            security_cursor_lens_valid: false
+            _cursor_security_lens: {}
+            _cursor_security_raw: {}
+            security_cursor_lens_last_fail: ""
+            pipeline_agent_calls: []
+
+        - name: Write fail_json parent-only stub payload
+          ansible.builtin.copy:
+            dest: "{{ cursor_agent_stub_file }}"
+            mode: "0600"
+            content: "{{ _parent_fail_stub | to_json }}"
+          vars:
+            _parent_fail_stub:
+              failed: true
+              msg: "Cursor run finished with status error (run_id=run-1)"
+              status: error
+              resolved_model: gpt-5.6-luna
+              usage_normalized:
+                input_tokens: 999
+                output_tokens: 99
+                cache_write_tokens: 0
+                cache_read_tokens: 0
+                thinking_tokens: 0
+                total_tokens: 1098
+              structured_tool_calls:
+                - name: report_findings
+                  caller: parent
+                  agent_id: parent-1
+                  args: "{{ _parent_fabricated_args }}"
+
+        - name: Dispatch the fail_json parent-only return through attempt rescue
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: dispatch_cursor_lens_attempt
+          vars:
+            cursor_lens_attempt_number: 1
+            cursor_lens_agent_id: security_lens
+            cursor_lens_description: stub security lens
+            cursor_lens_prompt: stub security prompt
+            cursor_lens_schema: { type: object }
+            cursor_lens_tool_description: Submit the security findings.
+            cursor_nonce_lens_label: "Security lens"
+            cursor_lens_valid_var: security_cursor_lens_valid
+            cursor_lens_args_var: _cursor_security_lens
+            cursor_lens_fail_var: security_cursor_lens_last_fail
+            cursor_lens_raw_var: _cursor_security_raw
+            cursor_lens_stats_name: security
+
+        - name: Confirm rescue did not bind or bill parent last-call
+          ansible.builtin.assert:
+            that:
+              - (_cursor_security_raw.stub | default(false) | bool)
+              - not (security_cursor_lens_valid | bool)
+              - pipeline_agent_calls | length == 0
+              - "'parent' in (security_cursor_lens_last_fail | default('') | lower)"
+              - "'.text' not in (security_cursor_lens_last_fail | default(''))"
+              - "'SECRET_DRAFT_MUST_NOT_APPEAR' not in (security_cursor_lens_last_fail | default(''))"
+            fail_msg: >-
+              Parent-only fail_json must not bind or land in pipeline_agent_calls.
+              valid={{ security_cursor_lens_valid | default('') }}
+              calls={{ pipeline_agent_calls | default([]) }}
+              fail={{ security_cursor_lens_last_fail | default('') }}
+            success_msg: "Rescue skipped parent-only bind and billing."

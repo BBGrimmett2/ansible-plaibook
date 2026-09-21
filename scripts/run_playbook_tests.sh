@@ -31,9 +31,19 @@ PLAYBOOKS=(
 
 echo "Running ${#PLAYBOOKS[@]} offline Ansible playbook test(s)..."
 
+# dispatch_cursor_lens_attempt.yml calls aknochow.cursor.agent. The
+# named-lens retry playbook stubs that module (no live Cursor) by
+# putting tests/fixtures/stub_collections first on the collections path.
+STUB_COLLECTIONS="${REPO_ROOT}/tests/fixtures/stub_collections"
+
 for pb in "${PLAYBOOKS[@]}"; do
   echo "--- Running ${pb} ---"
-  ansible-playbook "${pb}"
+  if [[ "${pb}" == "tests/test_cursor_named_lens_retry.yml" ]]; then
+    ANSIBLE_COLLECTIONS_PATH="${STUB_COLLECTIONS}${ANSIBLE_COLLECTIONS_PATH:+:${ANSIBLE_COLLECTIONS_PATH}}" \
+      ansible-playbook "${pb}"
+  else
+    ansible-playbook "${pb}"
+  fi
 done
 
 echo "--- Running tests/run_cursor_sidecar_skip.sh ---"
