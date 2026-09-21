@@ -16,7 +16,8 @@ pip install plaibook
 plai review
 ```
 
-`plai review` with no arguments reviews `HEAD` in the current
+Needs Python 3.10 or newer (3.10 stays on ansible-core 2.16; 3.11+
+gets 2.18/2.19). `plai review` with no arguments reviews `HEAD` in the current
 directory. The wheel vendors `review.yml`. First run installs Galaxy
 collections into `~/.cache/ansible-plaibook/collections` (never
 `~/.ansible`). See [`plaibook/README.md`](../plaibook/README.md).
