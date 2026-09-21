@@ -45,7 +45,8 @@
 # dispatch_lens_claude_cli.yml produces: .structured.{findings,scores},
 # .resolved_model, .usage_normalized. No observed_cost_usd -- cursor-sdk
 # RunResult has no USD on the one-shot path. Per-attempt usage is
-# appended to pipeline_agent_calls here (including failed attempts).
+# appended to pipeline_agent_calls here (including failed attempts
+# that are not parent-only). Parent last-call is not a lens call.
 
 - name: "Cursor: show the Security agent's request configuration"
   ansible.builtin.debug:

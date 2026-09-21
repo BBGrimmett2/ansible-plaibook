@@ -57,6 +57,9 @@ build/certs/*.crt
 # working-directory tree.
 tmp/
 
+# Offline cursor.agent stub payload written by test_cursor_named_lens_retry.yml
+tests/.cursor_agent_stub.json
+
 # Side effects of unrelated local tooling, not ansible-plaibook source.
 # .nicegui/: left behind by `ai-guardian setup` (a Red Hat Product
 # Security tool, unrelated to this repo) writing its NiceGUI local
