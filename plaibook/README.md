@@ -84,9 +84,10 @@ bundled copy. First run with no operator config prompts for a
 provider and writes `~/.config/ansible-plaibook/vars.yml`. `--provider
 cursor` does the same non-interactively and defaults Cursor to
 `gpt-5.6-luna` / `high`. PR/branch reviews skip nested OpenShell when
-this process is already inside a sandbox (in-guest JWT). They fail
-closed if that SDK is not importable from this interpreter
-(`--no-sandbox` to review on the host, `--sandbox` to require it).
+this process is already inside a sandbox (in-guest JWT). The SDK needs
+Python 3.11+; a 3.10 `plai` switches to
+`~/.cache/ansible-plaibook/sandbox-runtime` for that sandbox.
+`--no-sandbox` stays on this interpreter (`--sandbox` to require it).
 
 ## Output sugar
 

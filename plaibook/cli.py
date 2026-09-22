@@ -17,7 +17,7 @@ from plaibook.config import (
     resolve_family,
     running_inside_openshell,
 )
-from plaibook.openshell_sdk import OpenshellSdkError, ensure_openshell_sdk
+from plaibook.openshell_sdk import OpenshellSdkError, reexec_sandbox_runtime
 from plaibook.playbook import (
     PlaybookNotFoundError,
     PlaybookTimeoutError,
@@ -224,9 +224,9 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         default=None,
         help=(
             "Run PR/branch briefing in an OpenShell sandbox. Default is on for "
-            "pr/branch when the SDK is importable and this process is not "
-            "already inside OpenShell. Missing SDK fails closed unless "
-            "--no-sandbox."
+            "pr/branch when this process is not already inside OpenShell. "
+            "Python 3.10 switches to ~/.cache/ansible-plaibook/sandbox-runtime "
+            "(Python 3.11+). --no-sandbox stays on this interpreter."
         ),
     )
     review.add_argument(
@@ -344,9 +344,7 @@ def _apply_sandbox_fallback(args: argparse.Namespace, extras: dict) -> str | Non
     if extras.get("use_sandbox") is True and not openshell_available():
         return (
             "OpenShell SDK is not importable from "
-            f"{sys.executable}. Install it in this interpreter "
-            "(pip install 'openshell>=0.0.116,<0.0.120'), or pass --no-sandbox. "
-            "A copy in another venv does not count."
+            f"{sys.executable}. Pass --no-sandbox to review on this interpreter."
         )
     if "use_sandbox" in extras:
         return None
@@ -360,9 +358,8 @@ def _apply_sandbox_fallback(args: argparse.Namespace, extras: dict) -> str | Non
     return (
         "OpenShell SDK is not importable from "
         f"{sys.executable}. PR/branch reviews run untrusted checklist "
-        "commands and require a sandbox. Install OpenShell in this "
-        "interpreter (pip install 'openshell>=0.0.116,<0.0.120'), or pass "
-        "--no-sandbox to review on the host. A copy in another venv does not count."
+        "commands and require a sandbox. Pass --no-sandbox to review on "
+        "this interpreter."
     )
 
 
@@ -424,7 +421,7 @@ def cmd_review(args: argparse.Namespace) -> int:
     extras.setdefault("ansible_python_interpreter", sys.executable)
     if _wants_sandbox(extras):
         try:
-            ensure_openshell_sdk(stderr=sys.stderr)
+            reexec_sandbox_runtime(stderr=sys.stderr)
         except OpenshellSdkError as exc:
             print(str(exc), file=sys.stderr)
             return 2

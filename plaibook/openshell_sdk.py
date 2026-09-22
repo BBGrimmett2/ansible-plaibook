@@ -1,24 +1,45 @@
 # -*- coding: utf-8 -*-
-"""Install the OpenShell SDK into the interpreter that runs Ansible modules."""
+"""Install the OpenShell SDK into an interpreter that can import it.
+
+``openshell>=0.0.116`` requires Python 3.11. Ansible runs controller
+modules, including ``aknochow.openshell.sandbox``, with the same
+interpreter as ``ansible-playbook``. A Python 3.10 ``plai`` therefore
+prepares ``~/.cache/ansible-plaibook/sandbox-runtime`` from the first
+Python 3.11+ it can find and re-execs that runtime's ``plai``. The
+3.10 site-packages are not modified.
+"""
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import TextIO
+from urllib.parse import unquote, urlparse
+
+from plaibook.playbook import last_run_dir
 
 # Same pin as aknochow.openshell (OPENSHELL_SDK_SPEC). 0.0.116 is the
 # first release this collection calls; 0.0.120 is excluded so a later
 # 0.0.x API break does not get installed automatically.
 SDK_SPEC = "openshell>=0.0.116,<0.0.120"
+SDK_MIN_PYTHON = (3, 11)
+RUNTIME_DIRNAME = "sandbox-runtime"
+STAMP_NAME = "sandbox-runtime.json"
+ENV_REEXEC = "PLAIBOOK_SANDBOX_RUNTIME"
 _MIN = (0, 0, 116)
 _MAX = (0, 0, 120)
 _RELEASE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:\+.*)?$")
+_BREW_BIN = (Path("/opt/homebrew/bin"), Path("/usr/local/bin"))
+_SDK_MINORS = range(11, 15)
 
 
 class OpenshellSdkError(RuntimeError):
-    """Could not put a compatible openshell SDK on this interpreter."""
+    """Could not put a compatible openshell SDK on a 3.11+ interpreter."""
 
 
 def release_tuple(version: str) -> tuple[int, int, int] | None:
@@ -51,18 +72,110 @@ def sdk_satisfies() -> bool:
     return version_satisfies(installed)
 
 
-def _interpreter_satisfies(python: str) -> bool:
-    if python == sys.executable:
-        return sdk_satisfies()
-    probe = "import sys\nfrom plaibook.openshell_sdk import sdk_satisfies\nsys.exit(0 if sdk_satisfies() else 1)\n"
-    completed = subprocess.run(
-        [python, "-c", probe],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=60,
+def interpreter_version(python: str) -> tuple[int, int, int]:
+    """Return (major, minor, patch) for ``python``."""
+    if _same_executable(python):
+        return (sys.version_info[0], sys.version_info[1], sys.version_info[2])
+    completed = _run(
+        [python, "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"],
+        timeout=30,
     )
-    return completed.returncode == 0
+    if completed.returncode != 0:
+        detail = _detail(completed) or completed.returncode
+        raise OpenshellSdkError(f"cannot read Python version of {python}: {detail}")
+    parts = completed.stdout.split()
+    if len(parts) != 1:
+        raise OpenshellSdkError(f"cannot read Python version of {python}: {completed.stdout!r}")
+    nums = parts[0].split(".")
+    if len(nums) != 3 or not all(part.isdigit() for part in nums):
+        raise OpenshellSdkError(f"cannot read Python version of {python}: {completed.stdout!r}")
+    return (int(nums[0]), int(nums[1]), int(nums[2]))
+
+
+def interpreter_supports_sdk(python: str) -> bool:
+    """True when ``python`` is new enough for ``SDK_SPEC``."""
+    major, minor, _patch = interpreter_version(python)
+    return (major, minor) >= SDK_MIN_PYTHON
+
+
+def find_sdk_python() -> str | None:
+    """First Python >= 3.11 on PATH or in a Homebrew prefix.
+
+    3.11 is preferred over newer interpreters so the runtime stays on
+    the minimum the SDK documents.
+    """
+    candidates: list[str] = []
+    for minor in _SDK_MINORS:
+        found = shutil.which(f"python3.{minor}")
+        if found:
+            candidates.append(found)
+        for root in _BREW_BIN:
+            brew = root / f"python3.{minor}"
+            if brew.is_file():
+                candidates.append(str(brew))
+    found3 = shutil.which("python3")
+    if found3:
+        candidates.append(found3)
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            key = str(Path(candidate).resolve())
+        except OSError:
+            key = candidate
+        if key in seen:
+            continue
+        seen.add(key)
+        if _same_executable(candidate) and sys.version_info < SDK_MIN_PYTHON:
+            continue
+        try:
+            if interpreter_supports_sdk(candidate):
+                return candidate
+        except OpenshellSdkError:
+            continue
+    return None
+
+
+def spec_from_direct_url(data: dict, version: str) -> str:
+    """Pip requirement that reinstalls the plaibook build now running."""
+    url = str(data.get("url") or "")
+    vcs = data.get("vcs_info") or {}
+    commit = str(vcs.get("commit_id") or "")
+    if vcs.get("vcs") == "git" and commit and url:
+        prefix = url if url.startswith("git+") else f"git+{url}"
+        return f"{prefix}@{commit}"
+    if url.startswith("file:"):
+        path = unquote(urlparse(url).path)
+        if os.name == "nt" and len(path) >= 3 and path[0] == "/" and path[2] == ":":
+            path = path[1:]
+        if path:
+            return path
+    if version:
+        return f"plaibook=={version}"
+    raise OpenshellSdkError(
+        "Cannot tell which plaibook build is running, so a Python 3.11 sandbox runtime cannot be created."
+    )
+
+
+def plaibook_install_spec() -> str:
+    """Requirement for the plaibook distribution of this process."""
+    from importlib.metadata import PackageNotFoundError, distribution
+
+    try:
+        dist = distribution("plaibook")
+    except PackageNotFoundError as exc:
+        raise OpenshellSdkError(
+            "plaibook is not installed as a distribution, so a Python 3.11 sandbox runtime cannot be created."
+        ) from exc
+    raw = dist.read_text("direct_url.json")
+    if not raw:
+        return f"plaibook=={dist.version}"
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise OpenshellSdkError("plaibook direct_url.json is not valid JSON.") from exc
+    if not isinstance(data, dict):
+        raise OpenshellSdkError("plaibook direct_url.json is not an object.")
+    return spec_from_direct_url(data, dist.version)
 
 
 def ensure_openshell_sdk(
@@ -70,39 +183,249 @@ def ensure_openshell_sdk(
     *,
     stderr: TextIO | None = None,
 ) -> None:
-    """pip-install the pinned SDK when this interpreter's copy is missing or wrong.
+    """pip-install the pinned SDK when this interpreter can run it.
 
-    ``pip install openshell --upgrade`` leaves an editable ``0.0.0a0`` in
-    place and reports it already satisfied. Uninstall first so the pin
-    actually lands.
+    Refuses Python older than 3.11 without calling pip. An existing
+    copy is uninstalled only after ``pip install --dry-run`` resolves
+    ``SDK_SPEC``, so a failed resolve cannot delete the package.
     """
     exe = python or sys.executable
+    if not interpreter_supports_sdk(exe):
+        version = interpreter_version(exe)
+        raise OpenshellSdkError(
+            f"{exe} is Python {version[0]}.{version[1]}. "
+            f"OpenShell sandboxes need Python {SDK_MIN_PYTHON[0]}.{SDK_MIN_PYTHON[1]}+ "
+            f"because {SDK_SPEC} does not publish wheels for this interpreter. "
+            "Install Python 3.11 and re-run plai review (it prepares "
+            "~/.cache/ansible-plaibook/sandbox-runtime), or pass --no-sandbox."
+        )
     if _interpreter_satisfies(exe):
         return
     out = stderr if stderr is not None else sys.stderr
+    if _package_present(exe):
+        dry = _run([exe, "-m", "pip", "install", "--dry-run", "--disable-pip-version-check", SDK_SPEC], timeout=180)
+        if dry.returncode != 0:
+            detail = _detail(dry) or dry.returncode
+            raise OpenshellSdkError(
+                f"pip install --dry-run '{SDK_SPEC}' failed for {exe}: {detail}. "
+                "The existing openshell was left in place."
+            )
+        uninstall = _run([exe, "-m", "pip", "uninstall", "-y", "--disable-pip-version-check", "openshell"], timeout=120)
+        if uninstall.returncode != 0:
+            detail = _detail(uninstall) or uninstall.returncode
+            raise OpenshellSdkError(f"pip uninstall openshell failed: {detail}")
     out.write(f"Installing OpenShell SDK ({SDK_SPEC}) for {exe}…\n")
     out.flush()
-    uninstall = subprocess.run(
-        [exe, "-m", "pip", "uninstall", "-y", "openshell"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if uninstall.returncode != 0:
-        detail = (uninstall.stderr or uninstall.stdout or "").strip()
-        raise OpenshellSdkError(f"pip uninstall openshell failed: {detail or uninstall.returncode}")
-    install = subprocess.run(
-        [exe, "-m", "pip", "install", SDK_SPEC],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    install = _run([exe, "-m", "pip", "install", "--disable-pip-version-check", SDK_SPEC], timeout=300)
     if install.returncode != 0:
-        detail = (install.stderr or install.stdout or "").strip()
-        raise OpenshellSdkError(f"pip install '{SDK_SPEC}' failed: {detail or install.returncode}")
+        detail = _detail(install) or install.returncode
+        raise OpenshellSdkError(f"pip install '{SDK_SPEC}' failed: {detail}")
     if not _interpreter_satisfies(exe):
         raise OpenshellSdkError(
             f"pip install '{SDK_SPEC}' finished but {exe} still cannot import openshell.SandboxClient from that range."
         )
+
+
+def prepare_sandbox_runtime(*, stderr: TextIO | None = None, home: Path | None = None) -> str:
+    """Return a Python >= 3.11 whose site-packages has this plaibook and the SDK.
+
+    The runtime lives under ``~/.cache/ansible-plaibook/sandbox-runtime``.
+    It is recreated when the base interpreter or the plaibook build changes.
+    """
+    out = stderr if stderr is not None else sys.stderr
+    base = find_sdk_python()
+    if not base:
+        version = f"{sys.version_info[0]}.{sys.version_info[1]}"
+        raise OpenshellSdkError(
+            f"{sys.executable} is Python {version}. OpenShell sandboxes need Python 3.11+ "
+            f"because {SDK_SPEC} does not install on 3.10. "
+            "Install Python 3.11 (Homebrew: brew install python@3.11) and re-run the same "
+            "plai command. plai will create ~/.cache/ansible-plaibook/sandbox-runtime from it. "
+            "Or pass --no-sandbox."
+        )
+    spec = plaibook_install_spec()
+    runtime, stamp_path = _runtime_paths(home)
+    _refuse_symlink(runtime)
+    _refuse_symlink(stamp_path)
+    python = _venv_python(runtime)
+    plai = _venv_plai(runtime)
+    base_key = _resolved(base)
+    base_version = ".".join(str(part) for part in interpreter_version(base))
+    stamp = _read_stamp(stamp_path)
+    if (
+        python.is_file()
+        and plai.is_file()
+        and stamp.get("base") == base_key
+        and stamp.get("base_version") == base_version
+        and stamp.get("spec") == spec
+    ):
+        ensure_openshell_sdk(str(python), stderr=out)
+        return str(python)
+    if runtime.exists() and not runtime.is_dir():
+        raise OpenshellSdkError(f"{runtime} exists and is not a directory. Remove it so plaibook can own this runtime.")
+    out.write(f"OpenShell sandboxes need Python 3.11+. Preparing {runtime} from {base}…\n")
+    out.flush()
+    if runtime.exists():
+        shutil.rmtree(runtime)
+    runtime.parent.mkdir(parents=True, exist_ok=True)
+    created = _run([base, "-m", "venv", str(runtime)], timeout=180)
+    if created.returncode != 0:
+        detail = _detail(created) or created.returncode
+        raise OpenshellSdkError(f"could not create {runtime} with {base}: {detail}")
+    installed = _run(
+        [str(python), "-m", "pip", "install", "--disable-pip-version-check", spec, SDK_SPEC],
+        timeout=600,
+    )
+    if installed.returncode != 0:
+        detail = _detail(installed) or installed.returncode
+        raise OpenshellSdkError(f"pip install of {spec} and {SDK_SPEC} into {runtime} failed: {detail}")
+    if not plai.is_file():
+        raise OpenshellSdkError(f"{plai} was not created by the runtime install.")
+    _write_stamp(stamp_path, {"base": base_key, "base_version": base_version, "spec": spec})
+    ensure_openshell_sdk(str(python), stderr=out)
+    return str(python)
+
+
+def reexec_sandbox_runtime(
+    *,
+    stderr: TextIO | None = None,
+    argv: list[str] | None = None,
+    home: Path | None = None,
+) -> None:
+    """Stay on this interpreter when it can run the SDK; otherwise re-exec.
+
+    On success with a switch, this function does not return.
+    """
+    out = stderr if stderr is not None else sys.stderr
+    if interpreter_supports_sdk(sys.executable):
+        ensure_openshell_sdk(stderr=out)
+        return
+    if os.environ.get(ENV_REEXEC) == "1":
+        raise OpenshellSdkError(
+            f"Refusing to switch interpreters twice. {sys.executable} still cannot run the OpenShell SDK."
+        )
+    runtime_python = prepare_sandbox_runtime(stderr=out, home=home)
+    plai = Path(runtime_python).with_name("plai.exe" if os.name == "nt" else "plai")
+    if not plai.is_file():
+        raise OpenshellSdkError(f"{plai} is missing from the sandbox runtime.")
+    out.write(f"Continuing this sandboxed review with {plai}.\n")
+    out.flush()
+    os.environ[ENV_REEXEC] = "1"
+    os.environ.pop("PYTHONPATH", None)
+    venv_root = str(Path(runtime_python).resolve().parents[1])
+    current_venv = os.environ.get("VIRTUAL_ENV")
+    if current_venv:
+        try:
+            same = Path(current_venv).resolve() == Path(venv_root).resolve()
+        except OSError:
+            same = False
+        if not same:
+            os.environ.pop("VIRTUAL_ENV", None)
+    os.environ["VIRTUAL_ENV"] = venv_root
+    args = [str(plai), *(sys.argv[1:] if argv is None else argv)]
+    os.execv(str(plai), args)
+
+
+def _interpreter_satisfies(python: str) -> bool:
+    if _same_executable(python):
+        return sdk_satisfies()
+    probe = "import sys\nfrom plaibook.openshell_sdk import sdk_satisfies\nsys.exit(0 if sdk_satisfies() else 1)\n"
+    completed = _run([python, "-c", probe], timeout=60)
+    return completed.returncode == 0
+
+
+def _package_present(python: str) -> bool:
+    if _same_executable(python):
+        try:
+            from importlib.metadata import PackageNotFoundError, version
+        except ImportError:
+            return False
+        try:
+            version("openshell")
+        except PackageNotFoundError:
+            return False
+        return True
+    probe = (
+        "import importlib.metadata, sys\n"
+        "try:\n"
+        "    importlib.metadata.version('openshell')\n"
+        "except importlib.metadata.PackageNotFoundError:\n"
+        "    sys.exit(1)\n"
+    )
+    completed = _run([python, "-c", probe], timeout=60)
+    return completed.returncode == 0
+
+
+def _same_executable(python: str) -> bool:
+    try:
+        return Path(python).resolve() == Path(sys.executable).resolve()
+    except OSError:
+        return python == sys.executable
+
+
+def _resolved(path: str) -> str:
+    try:
+        return str(Path(path).resolve())
+    except OSError:
+        return path
+
+
+def _runtime_paths(home: Path | None) -> tuple[Path, Path]:
+    root = last_run_dir(home)
+    return root / RUNTIME_DIRNAME, root / STAMP_NAME
+
+
+def _venv_python(runtime: Path) -> Path:
+    if os.name == "nt":
+        return runtime / "Scripts" / "python.exe"
+    return runtime / "bin" / "python"
+
+
+def _venv_plai(runtime: Path) -> Path:
+    if os.name == "nt":
+        return runtime / "Scripts" / "plai.exe"
+    return runtime / "bin" / "plai"
+
+
+def _refuse_symlink(path: Path) -> None:
+    if path.is_symlink():
+        raise OpenshellSdkError(
+            f"{path} is a symlink; plaibook will not use it as the OpenShell runtime. Remove the symlink."
+        )
+
+
+def _read_stamp(path: Path) -> dict:
+    if path.is_symlink() or not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_stamp(path: Path, payload: dict) -> None:
+    _refuse_symlink(path)
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _detail(completed: subprocess.CompletedProcess[str]) -> str:
+    text = (completed.stderr or completed.stdout or "").strip()
+    if len(text) > 2000:
+        text = text[-2000:]
+    return text
+
+
+def _run(argv: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise OpenshellSdkError(f"command timed out after {timeout}s: {' '.join(argv[:4])}") from exc
+    except OSError as exc:
+        raise OpenshellSdkError(f"cannot run {argv[0]}: {exc}") from exc

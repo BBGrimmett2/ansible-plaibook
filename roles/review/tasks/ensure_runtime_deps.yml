@@ -3,8 +3,11 @@
 # This task covers `ansible-playbook review.yml` and a controller whose
 # openshell pip package is missing or is an editable 0.0.0a0 that
 # `pip install --upgrade` will not replace. Sandbox modules import the
-# SDK in a later process, so the install has to finish before
-# aknochow.openshell.sandbox runs.
+# SDK in the playbook interpreter, so the install has to finish before
+# aknochow.openshell.sandbox runs. Python 3.10 cannot import that SDK.
+# `plai review` switches to ~/.cache/ansible-plaibook/sandbox-runtime
+# first. A direct ansible-playbook run on 3.10 fails here without
+# uninstalling an existing openshell.
 
 - name: Ensure review collections are installed
   ansible.builtin.command:

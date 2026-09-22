@@ -17,6 +17,7 @@ from plaibook.cli import (
     extra_vars_from_args,
     main,
 )
+from plaibook.openshell_sdk import OpenshellSdkError
 from plaibook.playbook import (
     build_ansible_command,
     find_playbook_root,
@@ -1169,7 +1170,7 @@ def test_cmd_review_pr_fails_closed_without_openshell(tmp_path, monkeypatch, cap
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr("plaibook.cli.openshell_available", lambda: False)
     monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: False)
-    monkeypatch.setattr("plaibook.cli.ensure_openshell_sdk", lambda **kwargs: None)
+    monkeypatch.setattr("plaibook.cli.reexec_sandbox_runtime", lambda **kwargs: None)
     monkeypatch.setattr(
         "plaibook.cli.run_ansible_playbook",
         lambda *args, **kwargs: called.append(True),
@@ -1180,6 +1181,31 @@ def test_cmd_review_pr_fails_closed_without_openshell(tmp_path, monkeypatch, cap
     assert code == 2
     assert called == []
     assert "require a sandbox" in err
+
+
+def test_cmd_review_sandbox_runtime_error_stops_before_playbook(tmp_path, monkeypatch, capsys):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "review.yml").write_text("---\n")
+    (checkout / "ansible.cfg").write_text("[defaults]\n")
+    called = []
+
+    def boom(**_kwargs):
+        raise OpenshellSdkError("needs Python 3.11")
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: False)
+    monkeypatch.setattr("plaibook.cli.reexec_sandbox_runtime", boom)
+    monkeypatch.setattr(
+        "plaibook.cli.run_ansible_playbook",
+        lambda *args, **kwargs: called.append(True),
+    )
+
+    code = cmd_review(_args(target="org/repo/1", playbook_root=str(checkout)))
+    err = capsys.readouterr().err
+    assert code == 2
+    assert called == []
+    assert "needs Python 3.11" in err
 
 
 def test_load_vars_malformed_yaml_is_config_error(tmp_path):
