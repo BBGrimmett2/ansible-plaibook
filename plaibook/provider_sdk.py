@@ -27,7 +27,7 @@ FAMILY_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
         ("claude_agent_sdk", "claude-agent-sdk"),
     ),
     "gemini": (("google.genai", "google-genai"),),
-    "cursor": (("cursor", "cursor-sdk"),),
+    "cursor": (("cursor_sdk", "cursor-sdk"),),
 }
 FAMILY_HASHED_FILE: dict[str, str] = {
     "openai": "openai-requirements.txt",
