@@ -415,6 +415,35 @@ def test_ensure_collections_rejects_git_row_without_url(tmp_path):
     assert not (collections_dir(home) / ".requirements.sha256").is_file()
 
 
+def test_ensure_collections_rejects_plaintext_http_git(tmp_path):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text(
+        "collections:\n"
+        "  - name: http://github.com/example/ansible-posix.git\n"
+        "    type: git\n"
+        "    version: e98d9a0756458be1ac710988498000973889075c\n"
+    )
+    home = tmp_path / "home"
+    with pytest.raises(CollectionInstallError, match="not plaintext HTTP"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    assert not (collections_dir(home) / ".requirements.sha256").is_file()
+
+
+def test_ensure_collections_rejects_git_plus_http(tmp_path):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text(
+        "collections:\n"
+        "  - name: git+http://github.com/example/ansible-posix.git\n"
+        "    type: git\n"
+        "    version: e98d9a0756458be1ac710988498000973889075c\n"
+    )
+    home = tmp_path / "home"
+    with pytest.raises(CollectionInstallError, match="not plaintext HTTP"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+
+
 def test_ensure_collections_lets_unexpected_errors_propagate(tmp_path, monkeypatch):
     playbook = tmp_path / "playbook"
     playbook.mkdir()

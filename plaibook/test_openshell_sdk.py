@@ -147,9 +147,21 @@ def test_spec_from_direct_url_pins_git_commit():
     assert spec == "git+https://github.com/aknochow/ansible-plaibook.git@abc123"
 
 
-def test_spec_from_direct_url_file_and_pypi():
+def test_spec_from_direct_url_file_not_pypi():
     assert spec_from_direct_url({"url": "file:///tmp/plaibook"}, "0.1.0") == "/tmp/plaibook"
-    assert spec_from_direct_url({"url": "https://files.pythonhosted.org/plaibook.whl"}, "0.1.0") == "plaibook==0.1.0"
+    with pytest.raises(OpenshellSdkError, match="PyPI version pin"):
+        spec_from_direct_url({"url": "https://files.pythonhosted.org/plaibook.whl"}, "0.1.0")
+
+
+def test_spec_from_direct_url_rejects_http_git():
+    with pytest.raises(OpenshellSdkError, match="HTTP"):
+        spec_from_direct_url(
+            {
+                "url": "http://github.com/aknochow/ansible-plaibook.git",
+                "vcs_info": {"vcs": "git", "commit_id": "abc123"},
+            },
+            "0.1.0",
+        )
 
 
 def test_find_sdk_python_prefers_311(monkeypatch, tmp_path):
@@ -206,6 +218,9 @@ def test_prepare_runtime_creates_venv_and_installs(monkeypatch, tmp_path):
             bindir.mkdir(parents=True)
             (bindir / "python").write_text("")
             (bindir / "plai").write_text("")
+        if len(cmd) > 3 and cmd[2] == "pip" and cmd[3] == "wheel":
+            out = Path(cmd[cmd.index("-w") + 1])
+            (out / "plaibook-0.1.7-py3-none-any.whl").write_bytes(b"wheel")
         return SimpleNamespace(returncode=0, stdout="3.11.11\n", stderr="")
 
     ensured = []
@@ -221,17 +236,19 @@ def test_prepare_runtime_creates_venv_and_installs(monkeypatch, tmp_path):
     runtime = tmp_path / ".cache" / "ansible-plaibook" / "sandbox-runtime"
     assert python == str(runtime / "bin" / "python")
     assert recorded[0][:3] == [str(base), "-m", "venv"]
-    assert recorded[1][1:4] == ["-m", "pip", "install"]
+    assert recorded[1][1:4] == ["-m", "pip", "wheel"]
     assert "--no-deps" in recorded[1]
     assert recorded[1][-1] == "git+https://example/plaibook.git@abc"
-    assert SDK_SPEC not in recorded[1]
-    assert "--require-hashes" not in recorded[1]
     assert recorded[2][1:4] == ["-m", "pip", "install"]
+    assert "--no-deps" in recorded[2]
     assert "--require-hashes" in recorded[2]
-    assert recorded[2][-1] == str(hashed_requirements(RUNTIME_HASHED_REQUIREMENTS))
+    assert SDK_SPEC not in recorded[2]
     assert recorded[3][1:4] == ["-m", "pip", "install"]
     assert "--require-hashes" in recorded[3]
-    assert recorded[3][-1] == str(hashed_requirements(HASHED_REQUIREMENTS))
+    assert recorded[3][-1] == str(hashed_requirements(RUNTIME_HASHED_REQUIREMENTS))
+    assert recorded[4][1:4] == ["-m", "pip", "install"]
+    assert "--require-hashes" in recorded[4]
+    assert recorded[4][-1] == str(hashed_requirements(HASHED_REQUIREMENTS))
     assert ensured == [python]
     stamp = json.loads((tmp_path / ".cache" / "ansible-plaibook" / "sandbox-runtime.json").read_text())
     assert stamp["spec"] == "git+https://example/plaibook.git@abc"
@@ -301,6 +318,9 @@ def test_prepare_runtime_rebuilds_when_hashed_locks_change(monkeypatch, tmp_path
             new_bindir.mkdir(parents=True)
             (new_bindir / "python").write_text("")
             (new_bindir / "plai").write_text("")
+        if len(cmd) > 3 and cmd[2] == "pip" and cmd[3] == "wheel":
+            out = Path(cmd[cmd.index("-w") + 1])
+            (out / "plaibook-0.1.7-py3-none-any.whl").write_bytes(b"wheel")
         return SimpleNamespace(returncode=0, stdout="3.11.11\n", stderr="")
 
     monkeypatch.setattr("plaibook.openshell_sdk.find_sdk_python", lambda: str(base))
@@ -312,7 +332,8 @@ def test_prepare_runtime_rebuilds_when_hashed_locks_change(monkeypatch, tmp_path
     python = prepare_sandbox_runtime(stderr=None, home=tmp_path)
     assert python == str(runtime / "bin" / "python")
     assert recorded[0][:3] == [str(base), "-m", "venv"]
-    assert "--no-deps" in recorded[1]
+    assert recorded[1][1:4] == ["-m", "pip", "wheel"]
+    assert "--require-hashes" in recorded[2]
     stamp = json.loads((cache / "sandbox-runtime.json").read_text())
     assert stamp["locks"] == "new-lock"
 
@@ -322,7 +343,7 @@ def test_prepare_runtime_refuses_symlink(monkeypatch, tmp_path):
     cache.mkdir(parents=True)
     (cache / "sandbox-runtime").symlink_to(tmp_path)
     monkeypatch.setattr("plaibook.openshell_sdk.find_sdk_python", lambda: "/usr/bin/python3.11")
-    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda: "plaibook==0.1.0")
+    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda: "/tmp/plaibook")
     with pytest.raises(OpenshellSdkError, match="symlink"):
         prepare_sandbox_runtime(stderr=None, home=tmp_path)
 

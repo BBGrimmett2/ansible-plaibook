@@ -11,12 +11,14 @@ Python 3.11+ it can find and re-execs that runtime's ``plai``. The
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import TextIO
 from urllib.parse import unquote, urlparse
@@ -143,12 +145,21 @@ def find_sdk_python() -> str | None:
     return None
 
 
-def spec_from_direct_url(data: dict, version: str) -> str:
-    """Pip requirement that reinstalls the plaibook build now running."""
+def spec_from_direct_url(data: dict, version: str | None = None) -> str:
+    """Pip requirement that reinstalls the plaibook build now running.
+
+    Never returns ``plaibook==<version>``: that would let pip fetch an
+    unhashed wheel from an index. Git commits and local paths only.
+    """
+    _ = version
     url = str(data.get("url") or "")
     vcs = data.get("vcs_info") or {}
     commit = str(vcs.get("commit_id") or "")
     if vcs.get("vcs") == "git" and commit and url:
+        if _cleartext_http_url(url):
+            raise OpenshellSdkError(
+                "plaibook was installed from git over HTTP. Reinstall from HTTPS or a local path."
+            )
         prefix = url if url.startswith("git+") else f"git+{url}"
         return f"{prefix}@{commit}"
     if url.startswith("file:"):
@@ -157,11 +168,27 @@ def spec_from_direct_url(data: dict, version: str) -> str:
             path = path[1:]
         if path:
             return path
-    if version:
-        return f"plaibook=={version}"
     raise OpenshellSdkError(
-        "Cannot tell which plaibook build is running, so a Python 3.11 sandbox runtime cannot be created."
+        "Cannot tell which plaibook build is running (no git commit or local path in direct_url.json). "
+        "Reinstall from git or a local checkout; a PyPI version pin is not used for the sandbox runtime."
     )
+
+
+def _cleartext_http_url(url: str) -> bool:
+    rest = url.strip().removeprefix("git+").removeprefix("GIT+")
+    return rest.lower().startswith("http://")
+
+
+def _checkout_source_path() -> str | None:
+    root = Path(__file__).resolve().parent.parent
+    pyproject = root / "pyproject.toml"
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if 'name = "plaibook"' in text:
+        return str(root)
+    return None
 
 
 def plaibook_install_spec() -> str:
@@ -175,15 +202,22 @@ def plaibook_install_spec() -> str:
             "plaibook is not installed as a distribution, so a Python 3.11 sandbox runtime cannot be created."
         ) from exc
     raw = dist.read_text("direct_url.json")
-    if not raw:
-        return f"plaibook=={dist.version}"
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise OpenshellSdkError("plaibook direct_url.json is not valid JSON.") from exc
-    if not isinstance(data, dict):
-        raise OpenshellSdkError("plaibook direct_url.json is not an object.")
-    return spec_from_direct_url(data, dist.version)
+    if raw:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise OpenshellSdkError("plaibook direct_url.json is not valid JSON.") from exc
+        if not isinstance(data, dict):
+            raise OpenshellSdkError("plaibook direct_url.json is not an object.")
+        return spec_from_direct_url(data, dist.version)
+    local = _checkout_source_path()
+    if local:
+        return local
+    raise OpenshellSdkError(
+        "Cannot tell which plaibook build is running (no direct_url.json and no local checkout). "
+        "Reinstall from git or a local path; pip will not fetch plaibook==%s from an index."
+        % dist.version
+    )
 
 
 def ensure_openshell_sdk(
@@ -295,24 +329,10 @@ def prepare_sandbox_runtime(*, stderr: TextIO | None = None, home: Path | None =
     if created.returncode != 0:
         detail = _detail(created) or created.returncode
         raise OpenshellSdkError(f"could not create {runtime} with {base}: {detail}")
-    # This plaibook build is already on the controller; --no-deps keeps pip
-    # from resolving ansible-core / pyyaml / jinja2 / cursor-sdk from ranges.
-    # Those (and OpenShell) install next from hashed requirement files.
-    installed = _run(
-        [
-            str(python),
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "--no-deps",
-            spec,
-        ],
-        timeout=600,
-    )
-    if installed.returncode != 0:
-        detail = _detail(installed) or installed.returncode
-        raise OpenshellSdkError(f"pip install --no-deps of {spec} into {runtime} failed: {detail}")
+    # Build a wheel of this plaibook on the controller, then install it
+    # into the venv with --require-hashes. Never `pip install plaibook==…`
+    # (that would fetch an unhashed artifact from an index).
+    _install_plaibook_hashed(str(python), spec)
     _pip_install_hashed(str(python), RUNTIME_HASHED_REQUIREMENTS, timeout=600)
     _pip_install_hashed(str(python), HASHED_REQUIREMENTS, timeout=600)
     if not plai.is_file():
@@ -450,6 +470,63 @@ def _write_stamp(path: Path, payload: dict) -> None:
 
 def _runtime_lock_id() -> str:
     return lock_digest(RUNTIME_HASHED_REQUIREMENTS, HASHED_REQUIREMENTS)
+
+
+def _install_plaibook_hashed(venv_python: str, spec: str) -> None:
+    """Wheel this plaibook build, then pip --require-hashes --no-deps that file."""
+    with tempfile.TemporaryDirectory(prefix="plaibook-wheel-") as tmp:
+        tmp_path = Path(tmp)
+        wheels = tmp_path / "wheels"
+        wheels.mkdir()
+        built = _run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "wheel",
+                "--no-deps",
+                "--disable-pip-version-check",
+                "-w",
+                str(wheels),
+                spec,
+            ],
+            timeout=600,
+        )
+        if built.returncode != 0:
+            detail = _detail(built) or built.returncode
+            raise OpenshellSdkError(f"pip wheel --no-deps of {spec} failed: {detail}")
+        found = sorted(wheels.glob("plaibook-*.whl"))
+        if len(found) != 1:
+            names = ", ".join(path.name for path in found) or "none"
+            raise OpenshellSdkError(
+                f"pip wheel of {spec} did not produce exactly one plaibook wheel ({names})."
+            )
+        wheel = found[0]
+        digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        req = tmp_path / "plaibook-wheel-requirements.txt"
+        req.write_text(
+            f"plaibook @ {wheel.resolve().as_uri()} --hash=sha256:{digest}\n",
+            encoding="utf-8",
+        )
+        installed = _run(
+            [
+                venv_python,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-deps",
+                "--require-hashes",
+                "-r",
+                str(req),
+            ],
+            timeout=600,
+        )
+        if installed.returncode != 0:
+            detail = _detail(installed) or installed.returncode
+            raise OpenshellSdkError(
+                f"pip install --require-hashes of the local plaibook wheel failed: {detail}"
+            )
 
 
 def _pip_install_hashed(python: str, filename: str, *, timeout: int) -> None:

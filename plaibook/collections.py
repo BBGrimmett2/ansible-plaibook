@@ -66,6 +66,10 @@ class CollectionInstallError(RuntimeError):
 
 def require_commit_sha(url: str, ref: object) -> str:
     """Git collections must pin a full commit. Branches, tags, and HEAD move."""
+    if _cleartext_http_git(str(url)):
+        raise CollectionInstallError(
+            f"git collection {url} must use HTTPS (or ssh/file), not plaintext HTTP"
+        )
     if isinstance(ref, str) and COMMIT_SHA_RE.fullmatch(ref.lower()):
         return ref.lower()
     raise CollectionInstallError(f"git collection {url} must pin a 40-character commit SHA, not {ref!r}")
@@ -81,11 +85,21 @@ def redact_git_userinfo(text: str) -> str:
     return _BASIC_AUTH_RE.sub(r"\1[redacted]", text)
 
 
+def _cleartext_http_git(url: str) -> bool:
+    rest = url.strip().removeprefix("git+").removeprefix("GIT+")
+    return rest.lower().startswith("http://")
+
+
 def _git_source_name_ok(name: str) -> bool:
-    """Git rows are a URL or a local path, never a bare FQCN."""
-    if name.startswith(("https://", "http://", "git+", "git@", "file://")):
+    """Git rows are an HTTPS/ssh/file URL or a local path, never HTTP or a bare FQCN."""
+    if name.startswith(("/", "./", "../")):
         return True
-    return name.startswith(("/", "./", "../"))
+    if _cleartext_http_git(name):
+        return False
+    rest = name.removeprefix("git+")
+    if rest.startswith(("https://", "ssh://", "file://")):
+        return True
+    return name.startswith("git@")
 
 
 def ansible_galaxy_bin() -> str:
@@ -218,8 +232,14 @@ def _validate_requirement_row(requirements: Path, index: int, col: dict) -> None
         return
     if row_type not in (None, "git"):
         raise CollectionInstallError(f"{where} git source type must be git, not {row_type!r}")
+    if _cleartext_http_git(name):
+        raise CollectionInstallError(
+            f"{where}: git collection {name} must use HTTPS (or ssh/file), not plaintext HTTP"
+        )
     if not _git_source_name_ok(name):
-        raise CollectionInstallError(f"{where} git source must be an https, http, git@, or file URL, not {name!r}")
+        raise CollectionInstallError(
+            f"{where} git source must be an https, ssh, git@, or file URL, not {name!r}"
+        )
     url = name.removeprefix("git+")
     try:
         require_commit_sha(url, col.get("version"))
