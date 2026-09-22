@@ -130,6 +130,47 @@ delegated host. `auto_silent` forces real discovery inside the sandbox.
 `plai` does not pass `ansible_python_interpreter` as extra-vars: extra-vars
 win over `add_host`, and a controller venv path does not exist in the guest.
 
+## OpenShell network policy vs provider APIs
+
+Default `review.yml` does **not** send OpenAI / Anthropic / Gemini / Cursor
+traffic from inside the sandbox. Lens, explore, and verify SDK calls stay
+on the controller (step 5 above). Guest work is `grep`, `realpath`,
+checklist commands, and similar. A failed explore `search` is a guest
+command (or the SSH/gRPC session to that guest), not a missing
+`api.openai.com` allow rule.
+
+`--no-sandbox` is the split: if the same review finishes on the
+controller, the provider path is fine and the failure is sandbox
+isolation (policy, Landlock, russh/async, or the gateway).
+
+Two different allow lists:
+
+**Controller** (this Mac / EE / AAP pod). `plai` needs these for the
+configured provider. That is a host firewall or proxy question, not an
+OpenShell sandbox policy.
+
+| Provider | Typical HTTPS hosts |
+|---|---|
+| OpenAI | `api.openai.com` |
+| Anthropic | `api.anthropic.com` |
+| Gemini | `generativelanguage.googleapis.com` |
+| Vertex | `aiplatform.googleapis.com`, `oauth2.googleapis.com` |
+| Cursor | `api.cursor.com` |
+| PR clone (already on the controller) | `github.com`, `api.github.com`, `gitlab.com` |
+
+**Sandbox guest.** Only if you attach an OpenShell provider, run an
+agent CLI in the guest, or a `CHECKLIST.md` command phones home. Default
+`sandbox_policy` is empty (`{}`), which means "do not override the
+gateway default." Setting `sandbox_policy` **replaces** the gateway
+policy, including `network_policies`. An override that only lists
+filesystem paths is a deny-all network policy. Re-state any needed
+egress in that same object (see `examples/ai_guardian_scan.yml`).
+
+If you do need guest egress to providers, start from the same host
+table. Do not assume attaching a provider injects network rights — the
+README gotcha still holds: sandbox network policy is separate from
+provider attachment.
+
 ## What we don't do
 
 OpenShell's own community example (`ansible-openshell`'s
