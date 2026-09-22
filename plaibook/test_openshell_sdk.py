@@ -11,15 +11,18 @@ from types import SimpleNamespace
 import pytest
 
 from plaibook.openshell_sdk import (
+    HASHED_REQUIREMENTS,
     SDK_SPEC,
     OpenshellSdkError,
     ensure_openshell_sdk,
     find_sdk_python,
     prepare_sandbox_runtime,
     reexec_sandbox_runtime,
+    sdk_satisfies,
     spec_from_direct_url,
     version_satisfies,
 )
+from plaibook.pip_hashed import hashed_requirements
 
 
 def _capable(monkeypatch):
@@ -68,11 +71,16 @@ def test_ensure_openshell_sdk_replaces_editable_stub(monkeypatch):
     monkeypatch.setattr("plaibook.openshell_sdk._package_present", lambda _exe: True)
     monkeypatch.setattr("plaibook.openshell_sdk.subprocess.run", fake_run)
     ensure_openshell_sdk(stderr=None)
-    assert recorded[0][1:5] == ["-m", "pip", "install", "--dry-run"]
+    assert recorded[0][1:5] == ["-m", "pip", "install", "--disable-pip-version-check"]
+    assert "--dry-run" in recorded[0]
+    assert "--require-hashes" in recorded[0]
+    assert recorded[0][-1] == str(hashed_requirements(HASHED_REQUIREMENTS))
     assert recorded[1][1:4] == ["-m", "pip", "uninstall"]
     assert recorded[2][1:4] == ["-m", "pip", "install"]
     assert "--dry-run" not in recorded[2]
-    assert recorded[2][-1] == SDK_SPEC
+    assert "--require-hashes" in recorded[2]
+    assert recorded[2][-1] == str(hashed_requirements(HASHED_REQUIREMENTS))
+    assert SDK_SPEC not in recorded[2]
 
 
 def test_ensure_openshell_sdk_dry_run_failure_does_not_uninstall(monkeypatch):
@@ -112,6 +120,8 @@ def test_ensure_installs_without_uninstall_when_package_absent(monkeypatch):
     ensure_openshell_sdk(stderr=None)
     assert recorded[0][1:4] == ["-m", "pip", "install"]
     assert "--dry-run" not in recorded[0]
+    assert "--require-hashes" in recorded[0]
+    assert recorded[0][-1] == str(hashed_requirements(HASHED_REQUIREMENTS))
     assert all("uninstall" not in cmd for cmd in recorded)
 
 
@@ -211,7 +221,12 @@ def test_prepare_runtime_creates_venv_and_installs(monkeypatch, tmp_path):
     assert python == str(runtime / "bin" / "python")
     assert recorded[0][:3] == [str(base), "-m", "venv"]
     assert recorded[1][1:4] == ["-m", "pip", "install"]
-    assert recorded[1][-2:] == ["git+https://example/plaibook.git@abc", SDK_SPEC]
+    assert recorded[1][-1] == "git+https://example/plaibook.git@abc"
+    assert SDK_SPEC not in recorded[1]
+    assert "--require-hashes" not in recorded[1]
+    assert recorded[2][1:4] == ["-m", "pip", "install"]
+    assert "--require-hashes" in recorded[2]
+    assert recorded[2][-1] == str(hashed_requirements(HASHED_REQUIREMENTS))
     assert ensured == [python]
     stamp = json.loads((tmp_path / ".cache" / "ansible-plaibook" / "sandbox-runtime.json").read_text())
     assert stamp["spec"] == "git+https://example/plaibook.git@abc"
@@ -306,3 +321,49 @@ def test_reexec_refuses_a_second_switch(monkeypatch):
     monkeypatch.setattr("plaibook.openshell_sdk.prepare_sandbox_runtime", fail_prepare)
     with pytest.raises(OpenshellSdkError, match="twice"):
         reexec_sandbox_runtime(stderr=None)
+
+
+def test_sdk_satisfies_import_error_is_false(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "openshell" or name.startswith("openshell."):
+            raise ImportError("missing")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+    assert sdk_satisfies() is False
+
+
+def test_sdk_satisfies_package_not_found_is_false(monkeypatch):
+    import sys
+    from importlib.metadata import PackageNotFoundError
+    from types import ModuleType
+
+    fake = ModuleType("openshell")
+    fake.SandboxClient = object
+    monkeypatch.setitem(sys.modules, "openshell", fake)
+
+    def boom(_name):
+        raise PackageNotFoundError("openshell")
+
+    monkeypatch.setattr("importlib.metadata.version", boom)
+    assert sdk_satisfies() is False
+
+
+def test_sdk_satisfies_unexpected_error_propagates(monkeypatch):
+    import sys
+    from types import ModuleType
+
+    fake = ModuleType("openshell")
+    fake.SandboxClient = object
+    monkeypatch.setitem(sys.modules, "openshell", fake)
+
+    def boom(_name):
+        raise RuntimeError("metadata exploded")
+
+    monkeypatch.setattr("importlib.metadata.version", boom)
+    with pytest.raises(RuntimeError, match="metadata exploded"):
+        sdk_satisfies()

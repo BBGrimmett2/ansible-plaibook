@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plaibook"
-version = "0.1.5"
+version = "0.1.6"
 description = "Ansible-native AI code-review and bug-fix pipeline"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -62,7 +62,7 @@ cursor = [
 include = ["plaibook*"]
 
 [tool.setuptools.package-data]
-plaibook = ["share/**/*"]
+plaibook = ["share/**/*", "hashed/**/*"]
 
 [tool.setuptools.cmdclass]
 build_py = "plaibook._setup_share.build_py"

@@ -89,16 +89,31 @@ def _git_token() -> str | None:
     return token or None
 
 
+GIT_AUTH_HEADER_ENV = "PLAIBOOK_GIT_AUTH_HEADER"
+# Git config key used by --config-env. Built in parts so the value never
+# sits in argv (process listings / CalledProcessError).
+_GIT_EXTRAHEADER_KEY = "http." + "https://github.com/" + ".extraHeader"
+
+
+def _github_https_header(value: str) -> str:
+    # actions/checkout wire format: Basic, not Bearer. A Bearer header
+    # makes GitHub prompt for a username and public clones fail closed
+    # on Actions. Keep the credential out of the clone URL (gitleaks)
+    # and out of argv (--config-env).
+    packed = base64.b64encode(b"x-access-token:" + value.encode("ascii")).decode("ascii")
+    return "AUTHORIZATION: basic " + packed
+
+
 def _git(args: list[str], *, cwd: Path | None = None, token: str | None) -> None:
     cmd = ["git", "-c", "advice.detachedHead=false"]
+    run_kw: dict = {"cwd": cwd, "check": True, "timeout": GALAXY_TIMEOUT_SECONDS}
     if token:
-        # actions/checkout wire format: Basic, not Bearer. A Bearer header
-        # makes GitHub prompt for a username and public clones fail closed
-        # on Actions. Keep the token out of the clone URL (gitleaks).
-        basic = base64.b64encode(b"x-access-token:" + token.encode("ascii")).decode("ascii")
-        cmd += ["-c", f"http.https://github.com/.extraHeader=AUTHORIZATION: basic {basic}"]
+        env = os.environ.copy()
+        env[GIT_AUTH_HEADER_ENV] = _github_https_header(token)
+        cmd.append(f"--config-env={_GIT_EXTRAHEADER_KEY}={GIT_AUTH_HEADER_ENV}")
+        run_kw["env"] = env
     cmd += args
-    subprocess.run(cmd, cwd=cwd, check=True, timeout=GALAXY_TIMEOUT_SECONDS)
+    subprocess.run(cmd, **run_kw)
 
 
 def _clone_at_ref(url: str, ref: str, dest: Path, token: str | None) -> None:

@@ -72,11 +72,13 @@ def require_commit_sha(url: str, ref: object) -> str:
 
 
 _GIT_USERINFO_RE = re.compile(r"(https?://|git\+)[^/\s:@]+(?::[^/\s@]*)?@")
+_BASIC_AUTH_RE = re.compile(r"(?i)(AUTHORIZATION:\s*basic\s+)\S+")
 
 
 def redact_git_userinfo(text: str) -> str:
-    """Drop userinfo from git URLs so errors cannot log embedded credentials."""
-    return _GIT_USERINFO_RE.sub(r"\1", text)
+    """Drop userinfo and HTTP basic headers so errors cannot log credentials."""
+    text = _GIT_USERINFO_RE.sub(r"\1", text)
+    return _BASIC_AUTH_RE.sub(r"\1[redacted]", text)
 
 
 def _git_source_name_ok(name: str) -> bool:

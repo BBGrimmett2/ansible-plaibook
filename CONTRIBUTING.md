@@ -29,6 +29,20 @@ uv run ./scripts/run_playbook_tests.sh             # Offline Ansible playbook te
 uv run ansible-playbook review.yml --syntax-check  # Playbook syntax check
 ```
 
+## Runtime SDK pins
+
+Provider SDKs and the OpenShell SDK are installed at review time from
+`plaibook/hashed/*-requirements.txt` with `pip install --require-hashes`.
+Those files list exact versions and hashes for every transitive
+dependency. After changing a pin in `plaibook/hashed/*.in`, regenerate:
+
+```bash
+./scripts/compile-hashed-sdks.sh
+```
+
+Do not pass version ranges to `pip install` in `plaibook/provider_sdk.py`
+or `plaibook/openshell_sdk.py`.
+
 ## Collection pins
 
 `collections-requirements.yml` is git sources at commit SHAs: aknochow

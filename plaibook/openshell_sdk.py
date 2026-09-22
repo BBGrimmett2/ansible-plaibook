@@ -21,12 +21,14 @@ from pathlib import Path
 from typing import TextIO
 from urllib.parse import unquote, urlparse
 
+from plaibook.pip_hashed import pip_install_hashed_argv
 from plaibook.playbook import last_run_dir
 
 # Same pin as aknochow.openshell (OPENSHELL_SDK_SPEC). 0.0.116 is the
 # first release this collection calls; 0.0.120 is excluded so a later
 # 0.0.x API break does not get installed automatically.
 SDK_SPEC = "openshell>=0.0.116,<0.0.120"
+HASHED_REQUIREMENTS = "openshell-requirements.txt"
 SDK_MIN_PYTHON = (3, 11)
 RUNTIME_DIRNAME = "sandbox-runtime"
 STAMP_NAME = "sandbox-runtime.json"
@@ -59,16 +61,16 @@ def version_satisfies(version: str) -> bool:
 def sdk_satisfies() -> bool:
     """True when this process can import SandboxClient from an in-range SDK."""
     try:
-        from importlib.metadata import version
-
         from openshell import SandboxClient
-    except Exception:
+    except ImportError:
         return False
     if SandboxClient is None:
         return False
+    from importlib.metadata import PackageNotFoundError, version
+
     try:
         installed = version("openshell")
-    except Exception:
+    except PackageNotFoundError:
         return False
     return version_satisfies(installed)
 
@@ -207,12 +209,17 @@ def ensure_openshell_sdk(
     if _interpreter_satisfies(exe):
         return
     out = stderr if stderr is not None else sys.stderr
+    try:
+        dry_argv = pip_install_hashed_argv(exe, HASHED_REQUIREMENTS, dry_run=True)
+        install_argv = pip_install_hashed_argv(exe, HASHED_REQUIREMENTS)
+    except OSError as exc:
+        raise OpenshellSdkError(f"cannot read hashed OpenShell requirements: {exc}") from exc
     if _package_present(exe):
-        dry = _run([exe, "-m", "pip", "install", "--dry-run", "--disable-pip-version-check", SDK_SPEC], timeout=180)
+        dry = _run(dry_argv, timeout=180)
         if dry.returncode != 0:
             detail = _detail(dry) or dry.returncode
             raise OpenshellSdkError(
-                f"pip install --dry-run '{SDK_SPEC}' failed for {exe}: {detail}. "
+                f"pip install --dry-run --require-hashes -r {HASHED_REQUIREMENTS} failed for {exe}: {detail}. "
                 "The existing openshell was left in place."
             )
         uninstall = _run([exe, "-m", "pip", "uninstall", "-y", "--disable-pip-version-check", "openshell"], timeout=120)
@@ -221,13 +228,16 @@ def ensure_openshell_sdk(
             raise OpenshellSdkError(f"pip uninstall openshell failed: {detail}")
     out.write(f"Installing OpenShell SDK ({SDK_SPEC}) for {exe}…\n")
     out.flush()
-    install = _run([exe, "-m", "pip", "install", "--disable-pip-version-check", SDK_SPEC], timeout=300)
+    install = _run(install_argv, timeout=300)
     if install.returncode != 0:
         detail = _detail(install) or install.returncode
-        raise OpenshellSdkError(f"pip install '{SDK_SPEC}' failed: {detail}")
+        raise OpenshellSdkError(
+            f"pip install --require-hashes -r {HASHED_REQUIREMENTS} failed: {detail}"
+        )
     if not _interpreter_satisfies(exe):
         raise OpenshellSdkError(
-            f"pip install '{SDK_SPEC}' finished but {exe} still cannot import openshell.SandboxClient from that range."
+            f"pip install --require-hashes -r {HASHED_REQUIREMENTS} finished but {exe} still cannot import "
+            "openshell.SandboxClient from that range."
         )
 
 
@@ -283,12 +293,22 @@ def prepare_sandbox_runtime(*, stderr: TextIO | None = None, home: Path | None =
         detail = _detail(created) or created.returncode
         raise OpenshellSdkError(f"could not create {runtime} with {base}: {detail}")
     installed = _run(
-        [str(python), "-m", "pip", "install", "--disable-pip-version-check", spec, SDK_SPEC],
+        [str(python), "-m", "pip", "install", "--disable-pip-version-check", spec],
         timeout=600,
     )
     if installed.returncode != 0:
         detail = _detail(installed) or installed.returncode
-        raise OpenshellSdkError(f"pip install of {spec} and {SDK_SPEC} into {runtime} failed: {detail}")
+        raise OpenshellSdkError(f"pip install of {spec} into {runtime} failed: {detail}")
+    try:
+        sdk_argv = pip_install_hashed_argv(str(python), HASHED_REQUIREMENTS)
+    except OSError as exc:
+        raise OpenshellSdkError(f"cannot read hashed OpenShell requirements: {exc}") from exc
+    sdk_installed = _run(sdk_argv, timeout=600)
+    if sdk_installed.returncode != 0:
+        detail = _detail(sdk_installed) or sdk_installed.returncode
+        raise OpenshellSdkError(
+            f"pip install --require-hashes -r {HASHED_REQUIREMENTS} into {runtime} failed: {detail}"
+        )
     if not plai.is_file():
         raise OpenshellSdkError(f"{plai} was not created by the runtime install.")
     _write_stamp(stamp_path, {"base": base_key, "base_version": base_version, "spec": spec})

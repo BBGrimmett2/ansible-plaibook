@@ -1,0 +1,3 @@
+# Collection range: google-genai>=1.0.0
+# Compile: scripts/compile-hashed-sdks.sh
+google-genai>=1.0.0

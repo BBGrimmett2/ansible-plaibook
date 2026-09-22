@@ -462,6 +462,13 @@ def test_git_fetch_error_redacts_userinfo(tmp_path, monkeypatch):
     assert redact_git_userinfo(url) == "https://github.com/org/repo.git"
 
 
+def test_redact_git_userinfo_strips_basic_authorization_header():
+    leaked = "fatal: extraHeader=AUTHORIZATION: basic abcdef0123456789"
+    cleaned = redact_git_userinfo(leaked)
+    assert "abcdef0123456789" not in cleaned
+    assert "AUTHORIZATION: basic [redacted]" in cleaned
+
+
 def test_install_git_sources_passes_env_to_clone(tmp_path, monkeypatch):
     seen = {}
 
@@ -779,6 +786,7 @@ def test_ensure_collections_holds_flock_during_galaxy(tmp_path, monkeypatch):
             [galaxy, "collection", "install", "-p", str(dest), "--force", "--no-deps"],
             env=env,
             capture_output=True,
+            timeout=coll.GALAXY_TIMEOUT_SECONDS,
         )
 
     monkeypatch.setattr(coll, "install_git_sources", fake_git)
