@@ -480,7 +480,7 @@ def test_git_fetch_error_redacts_userinfo(tmp_path, monkeypatch):
 
     monkeypatch.setattr("plaibook.collections.subprocess.run", boom)
     dest = tmp_path / "checkout"
-    url = "https://user:supersecret1@github.com/org/repo.git"
+    url = "https://github.com/org/repo.git"
     sha = "e98d9a0756458be1ac710988498000973889075c"
     with pytest.raises(CollectionInstallError, match="git fetch failed") as raised:
         _clone_at_ref(url, sha, dest, env={"GIT_TERMINAL_PROMPT": "0"})
@@ -488,7 +488,46 @@ def test_git_fetch_error_redacts_userinfo(tmp_path, monkeypatch):
     assert "supersecret1" not in message
     assert "user:" not in message
     assert "github.com/org/repo.git" in message
-    assert redact_git_userinfo(url) == "https://github.com/org/repo.git"
+    assert redact_git_userinfo("https://user:supersecret1@github.com/org/repo.git") == (
+        "https://github.com/org/repo.git"
+    )
+
+
+def test_clone_strips_userinfo_from_git_remote_argv(monkeypatch, tmp_path):
+    sha = "e98d9a0756458be1ac710988498000973889075c"
+    recorded = []
+
+    def fake_run(cmd, **kwargs):
+        recorded.append(list(cmd))
+        if "rev-parse" in cmd:
+            return SimpleNamespace(returncode=0, stdout=f"{sha}\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("plaibook.collections.require_commit_sha", lambda url, ref: str(ref).lower())
+    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    dest = tmp_path / "checkout"
+    _clone_at_ref("https://user:supersecret1@github.com/org/repo.git", sha, dest)
+    joined = " ".join(" ".join(cmd) for cmd in recorded)
+    assert "supersecret1" not in joined
+    assert "user:" not in joined
+    origin = next(cmd for cmd in recorded if cmd[:3] == ["git", "remote", "add"])
+    assert origin[-1] == "https://github.com/org/repo.git"
+
+
+def test_ensure_collections_rejects_git_userinfo(tmp_path):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text(
+        "collections:\n"
+        "  - name: https://user:supersecret1@github.com/example/ansible-posix.git\n"
+        "    type: git\n"
+        "    version: e98d9a0756458be1ac710988498000973889075c\n"
+    )
+    home = tmp_path / "home"
+    with pytest.raises(CollectionInstallError, match="must not embed credentials") as raised:
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    assert "supersecret1" not in str(raised.value)
+    assert not (collections_dir(home) / ".requirements.sha256").is_file()
 
 
 def test_redact_git_userinfo_strips_basic_authorization_header():

@@ -66,13 +66,18 @@ class CollectionInstallError(RuntimeError):
 
 def require_commit_sha(url: str, ref: object) -> str:
     """Git collections must pin a full commit. Branches, tags, and HEAD move."""
+    shown = redact_git_userinfo(str(url))
+    if git_url_has_userinfo(str(url)):
+        raise CollectionInstallError(
+            f"git collection {shown} must not embed credentials in the URL"
+        )
     if _cleartext_http_git(str(url)):
         raise CollectionInstallError(
-            f"git collection {url} must use HTTPS (or ssh/file), not plaintext HTTP"
+            f"git collection {shown} must use HTTPS (or ssh/file), not plaintext HTTP"
         )
     if isinstance(ref, str) and COMMIT_SHA_RE.fullmatch(ref.lower()):
         return ref.lower()
-    raise CollectionInstallError(f"git collection {url} must pin a 40-character commit SHA, not {ref!r}")
+    raise CollectionInstallError(f"git collection {shown} must pin a 40-character commit SHA, not {ref!r}")
 
 
 _GIT_USERINFO_RE = re.compile(r"(https?://|git\+)[^/\s:@]+(?::[^/\s@]*)?@")
@@ -83,6 +88,11 @@ def redact_git_userinfo(text: str) -> str:
     """Drop userinfo and HTTP basic headers so errors cannot log credentials."""
     text = _GIT_USERINFO_RE.sub(r"\1", text)
     return _BASIC_AUTH_RE.sub(r"\1[redacted]", text)
+
+
+def git_url_has_userinfo(url: str) -> bool:
+    """True when a git URL embeds username/password/token in the authority."""
+    return _GIT_USERINFO_RE.search(url) is not None
 
 
 def _cleartext_http_git(url: str) -> bool:
@@ -234,11 +244,15 @@ def _validate_requirement_row(requirements: Path, index: int, col: dict) -> None
         raise CollectionInstallError(f"{where} git source type must be git, not {row_type!r}")
     if _cleartext_http_git(name):
         raise CollectionInstallError(
-            f"{where}: git collection {name} must use HTTPS (or ssh/file), not plaintext HTTP"
+            f"{where}: git collection {redact_git_userinfo(name)} must use HTTPS (or ssh/file), not plaintext HTTP"
+        )
+    if git_url_has_userinfo(name):
+        raise CollectionInstallError(
+            f"{where}: git collection {redact_git_userinfo(name)} must not embed credentials in the URL"
         )
     if not _git_source_name_ok(name):
         raise CollectionInstallError(
-            f"{where} git source must be an https, ssh, git@, or file URL, not {name!r}"
+            f"{where} git source must be an https, ssh, git@, or file URL, not {redact_git_userinfo(name)!r}"
         )
     url = name.removeprefix("git+")
     try:
@@ -322,7 +336,7 @@ def _clone_at_ref(url: str, ref: str, dest: Path, env: dict[str, str] | None = N
                 text=True,
             )
             subprocess.run(
-                ["git", "remote", "add", "origin", url],
+                ["git", "remote", "add", "origin", safe_url],
                 cwd=dest,
                 env=env,
                 check=True,

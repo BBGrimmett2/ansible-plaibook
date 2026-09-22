@@ -147,6 +147,19 @@ def test_spec_from_direct_url_pins_git_commit():
     assert spec == "git+https://github.com/aknochow/ansible-plaibook.git@abc123"
 
 
+def test_spec_from_direct_url_strips_userinfo():
+    spec = spec_from_direct_url(
+        {
+            "url": "https://user:supersecret1@github.com/aknochow/ansible-plaibook.git",
+            "vcs_info": {"vcs": "git", "commit_id": "abc123"},
+        },
+        "0.1.0",
+    )
+    assert spec == "git+https://github.com/aknochow/ansible-plaibook.git@abc123"
+    assert "supersecret1" not in spec
+    assert "user:" not in spec
+
+
 def test_spec_from_direct_url_file_not_pypi():
     assert spec_from_direct_url({"url": "file:///tmp/plaibook"}, "0.1.0") == "/tmp/plaibook"
     with pytest.raises(OpenshellSdkError, match="PyPI version pin"):

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TextIO
 from urllib.parse import unquote, urlparse
 
+from plaibook.collections import redact_git_userinfo
 from plaibook.pip_hashed import lock_digest, pip_install_hashed_argv
 from plaibook.playbook import last_run_dir
 
@@ -162,7 +163,7 @@ def spec_from_direct_url(data: dict, version: str | None = None) -> str:
                 "plaibook was installed from git over HTTP. Reinstall from HTTPS or a local path."
             )
         prefix = url if url.startswith("git+") else f"git+{url}"
-        return f"{prefix}@{commit}"
+        return f"{redact_git_userinfo(prefix)}@{commit}"
     if url.startswith("file:"):
         path = unquote(urlparse(url).path)
         if os.name == "nt" and len(path) >= 3 and path[0] == "/" and path[2] == ":":

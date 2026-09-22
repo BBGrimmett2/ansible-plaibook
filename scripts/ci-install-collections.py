@@ -128,7 +128,7 @@ def _clone_at_ref(url: str, ref: str, dest: Path, token: str | None) -> None:
         dest.mkdir(parents=True)
         try:
             _git(["init", "-b", "main"], cwd=dest, token=token)
-            _git(["remote", "add", "origin", url], cwd=dest, token=token)
+            _git(["remote", "add", "origin", redact_git_userinfo(url)], cwd=dest, token=token)
             _git(["fetch", "--depth", "1", "origin", sha], cwd=dest, token=token)
             _git(["checkout", "FETCH_HEAD"], cwd=dest, token=token)
             got = subprocess.run(
