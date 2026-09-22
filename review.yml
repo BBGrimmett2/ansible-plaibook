@@ -279,6 +279,12 @@
         pipeline_phase_durations: []
         pipeline_findings_reports: []
 
+    # Collections and provider pip packages must land before preflight:
+    # a 3.10 plai re-execs into sandbox-runtime, which is a clean 3.11
+    # venv. OpenAI/Claude/Gemini SDKs are not plaibook dependencies.
+    - name: Ensure collections and provider SDKs before preflight
+      ansible.builtin.include_tasks: roles/review/tasks/ensure_runtime_deps.yml
+
     # Load the review role's provider defaults and validate provider-specific
     # controller prerequisites before creating a sandbox or cloning a target.
     # A stale collection or missing SDK must fail here, not after an expensive

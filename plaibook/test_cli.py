@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import yaml
 
 from plaibook.cli import (
@@ -26,6 +27,11 @@ from plaibook.playbook import (
     last_run_path,
 )
 from plaibook.summary import enrich_last_run, format_pretty
+
+
+@pytest.fixture(autouse=True)
+def _noop_provider_sdk_install(monkeypatch):
+    monkeypatch.setattr("plaibook.cli.ensure_provider_sdk", lambda *args, **kwargs: None)
 
 
 def _args(**overrides):
@@ -1206,6 +1212,41 @@ def test_cmd_review_sandbox_runtime_error_stops_before_playbook(tmp_path, monkey
     assert code == 2
     assert called == []
     assert "needs Python 3.11" in err
+
+
+def test_cmd_review_installs_openai_provider_sdk(tmp_path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "review.yml").write_text("---\n")
+    (checkout / "ansible.cfg").write_text("[defaults]\n")
+    home = tmp_path / "home"
+    (home / ".cache" / "ansible-plaibook").mkdir(parents=True)
+    families = []
+
+    def fake_run(command, *, playbook_root, verbose, env=None):
+        extras = json.loads(command[command.index("-e") + 1])
+        path = last_run_path(extras["last_run_id"], home=home)
+        path.write_text(json.dumps({"run_id": extras["last_run_id"], "status": "ok", "targets": []}))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr("plaibook.cli.run_ansible_playbook", fake_run)
+    monkeypatch.setattr(
+        "plaibook.cli.build_ansible_command",
+        lambda **kwargs: build_ansible_command(ansible_bin="ansible-playbook", **kwargs),
+    )
+    monkeypatch.setattr("plaibook.cli.last_run_path", lambda run_id: last_run_path(run_id, home=home))
+    monkeypatch.setattr("plaibook.cli.ensure_provider_sdk", lambda family, **kwargs: families.append(family))
+
+    code = cmd_review(
+        _args(
+            commit=True,
+            playbook_root=str(checkout),
+            cli_extra_vars=["agent_family=openai"],
+        )
+    )
+    assert code == 0
+    assert families == ["openai"]
 
 
 def test_load_vars_malformed_yaml_is_config_error(tmp_path):

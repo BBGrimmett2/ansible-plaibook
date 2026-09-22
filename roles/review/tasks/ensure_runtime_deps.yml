@@ -28,6 +28,24 @@
   changed_when: "'Installing Ansible collections' in (_ensure_collections.stderr | default(''))"
   timeout: 600
 
+- name: Ensure the selected provider Python SDK is installed
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_python_interpreter | default(ansible_playbook_python) }}"
+      - -c
+      - |
+        import sys
+        from plaibook.provider_sdk import ProviderSdkError, ensure_provider_sdk
+        try:
+            ensure_provider_sdk(sys.argv[1])
+        except ProviderSdkError as exc:
+            print(exc, file=sys.stderr)
+            sys.exit(1)
+      - "{{ agent_family | default('') }}"
+  register: _ensure_provider_sdk
+  changed_when: "'Installing' in (_ensure_provider_sdk.stderr | default('')) and 'provider SDK' in (_ensure_provider_sdk.stderr | default(''))"
+  timeout: 300
+
 - name: Ensure the OpenShell SDK is installed for sandbox reviews
   when: use_sandbox | bool
   ansible.builtin.command:

@@ -19,7 +19,9 @@ plai review
 Needs Python 3.10 or newer (3.10 stays on ansible-core 2.16; 3.11+
 gets 2.18/2.19). OpenShell sandboxes need Python 3.11+. A 3.10 `plai review`
 creates `~/.cache/ansible-plaibook/sandbox-runtime` from the first
-`python3.11` (or newer) it finds and continues there. `--no-sandbox`
+`python3.11` (or newer) it finds, installs this plaibook build, the
+OpenShell SDK, and the configured provider SDK (openai / anthropic /
+google-genai) there, and continues with that interpreter. `--no-sandbox`
 stays on the 3.10 interpreter. `plai review` with no arguments reviews `HEAD` in the current
 directory. The wheel vendors `review.yml`. First run clones collections
 from GitHub into `~/.cache/ansible-plaibook/collections` (never

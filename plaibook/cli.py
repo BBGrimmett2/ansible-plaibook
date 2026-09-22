@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -13,6 +14,7 @@ from plaibook.collections import CollectionInstallError, ensure_collections
 from plaibook.config import (
     FAMILIES,
     ConfigError,
+    load_vars,
     openshell_available,
     resolve_family,
     running_inside_openshell,
@@ -30,6 +32,7 @@ from plaibook.playbook import (
     runtime_tmp_dir,
 )
 from plaibook.progress import create_progress_file
+from plaibook.provider_sdk import ProviderSdkError, ensure_provider_sdk
 from plaibook.summary import (
     SummaryError,
     dump_json,
@@ -433,6 +436,15 @@ def cmd_review(args: argparse.Namespace) -> int:
                 stderr=sys.stderr,
             )
         except (ValueError, ConfigError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+    family = extras.get("agent_family") or load_vars().get("agent_family")
+    if not family:
+        family = (os.environ.get("ANSIBLE_REVIEW_AGENT_FAMILY") or "").strip() or None
+    if family:
+        try:
+            ensure_provider_sdk(str(family), stderr=sys.stderr)
+        except ProviderSdkError as exc:
             print(str(exc), file=sys.stderr)
             return 2
     sandbox_error = _apply_sandbox_fallback(args, extras)
