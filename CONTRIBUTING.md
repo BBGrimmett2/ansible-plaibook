@@ -31,11 +31,13 @@ uv run ansible-playbook review.yml --syntax-check  # Playbook syntax check
 
 ## Runtime SDK pins
 
-Provider SDKs, the OpenShell SDK, and the Python 3.11 sandbox-runtime's
-plaibook dependencies are installed from `plaibook/hashed/*-requirements.txt`
-with `pip install --require-hashes`. The sandbox runtime installs this
-plaibook build with `--no-deps`, then those hashed files. After changing a
-pin in `plaibook/hashed/*.in`, regenerate:
+Provider SDKs, the OpenShell SDK, the Python 3.11 sandbox-runtime's
+plaibook dependencies, and the setuptools/wheel used to wheel this
+plaibook build are installed from `plaibook/hashed/*-requirements.txt`
+with `pip install --require-hashes`. The sandbox runtime installs
+hashed setuptools, wheels this plaibook with `--no-build-isolation`,
+then `pip install --require-hashes --no-deps` of that wheel. After
+changing a pin in `plaibook/hashed/*.in`, regenerate:
 
 ```bash
 ./scripts/compile-hashed-sdks.sh

@@ -32,6 +32,7 @@ from plaibook.playbook import last_run_dir
 SDK_SPEC = "openshell>=0.0.116,<0.0.120"
 HASHED_REQUIREMENTS = "openshell-requirements.txt"
 RUNTIME_HASHED_REQUIREMENTS = "sandbox-runtime-requirements.txt"
+BUILD_BACKEND_REQUIREMENTS = "build-backend-requirements.txt"
 SDK_MIN_PYTHON = (3, 11)
 RUNTIME_DIRNAME = "sandbox-runtime"
 STAMP_NAME = "sandbox-runtime.json"
@@ -329,9 +330,9 @@ def prepare_sandbox_runtime(*, stderr: TextIO | None = None, home: Path | None =
     if created.returncode != 0:
         detail = _detail(created) or created.returncode
         raise OpenshellSdkError(f"could not create {runtime} with {base}: {detail}")
-    # Build a wheel of this plaibook on the controller, then install it
-    # into the venv with --require-hashes. Never `pip install plaibook==…`
-    # (that would fetch an unhashed artifact from an index).
+    # Hashed setuptools/wheel first, then pip wheel --no-build-isolation so
+    # the build backend is not resolved from an unhashed index.
+    _pip_install_hashed(str(python), BUILD_BACKEND_REQUIREMENTS, timeout=300)
     _install_plaibook_hashed(str(python), spec)
     _pip_install_hashed(str(python), RUNTIME_HASHED_REQUIREMENTS, timeout=600)
     _pip_install_hashed(str(python), HASHED_REQUIREMENTS, timeout=600)
@@ -469,22 +470,27 @@ def _write_stamp(path: Path, payload: dict) -> None:
 
 
 def _runtime_lock_id() -> str:
-    return lock_digest(RUNTIME_HASHED_REQUIREMENTS, HASHED_REQUIREMENTS)
+    return lock_digest(BUILD_BACKEND_REQUIREMENTS, RUNTIME_HASHED_REQUIREMENTS, HASHED_REQUIREMENTS)
 
 
 def _install_plaibook_hashed(venv_python: str, spec: str) -> None:
-    """Wheel this plaibook build, then pip --require-hashes --no-deps that file."""
+    """Wheel this plaibook build with the venv's hashed setuptools, then install it.
+
+    ``pip wheel`` uses ``--no-build-isolation`` so the build backend is the
+    hashed setuptools/wheel already in the venv, not an unhashed index resolve.
+    """
     with tempfile.TemporaryDirectory(prefix="plaibook-wheel-") as tmp:
         tmp_path = Path(tmp)
         wheels = tmp_path / "wheels"
         wheels.mkdir()
         built = _run(
             [
-                sys.executable,
+                venv_python,
                 "-m",
                 "pip",
                 "wheel",
                 "--no-deps",
+                "--no-build-isolation",
                 "--disable-pip-version-check",
                 "-w",
                 str(wheels),

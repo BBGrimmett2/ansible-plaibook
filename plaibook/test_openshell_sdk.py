@@ -236,19 +236,24 @@ def test_prepare_runtime_creates_venv_and_installs(monkeypatch, tmp_path):
     runtime = tmp_path / ".cache" / "ansible-plaibook" / "sandbox-runtime"
     assert python == str(runtime / "bin" / "python")
     assert recorded[0][:3] == [str(base), "-m", "venv"]
-    assert recorded[1][1:4] == ["-m", "pip", "wheel"]
-    assert "--no-deps" in recorded[1]
-    assert recorded[1][-1] == "git+https://example/plaibook.git@abc"
-    assert recorded[2][1:4] == ["-m", "pip", "install"]
+    assert recorded[1][1:4] == ["-m", "pip", "install"]
+    assert "--require-hashes" in recorded[1]
+    assert recorded[1][-1] == str(hashed_requirements("build-backend-requirements.txt"))
+    assert recorded[2][1:4] == ["-m", "pip", "wheel"]
     assert "--no-deps" in recorded[2]
-    assert "--require-hashes" in recorded[2]
-    assert SDK_SPEC not in recorded[2]
+    assert "--no-build-isolation" in recorded[2]
+    assert recorded[2][0] == python
+    assert recorded[2][-1] == "git+https://example/plaibook.git@abc"
     assert recorded[3][1:4] == ["-m", "pip", "install"]
+    assert "--no-deps" in recorded[3]
     assert "--require-hashes" in recorded[3]
-    assert recorded[3][-1] == str(hashed_requirements(RUNTIME_HASHED_REQUIREMENTS))
+    assert SDK_SPEC not in recorded[3]
     assert recorded[4][1:4] == ["-m", "pip", "install"]
     assert "--require-hashes" in recorded[4]
-    assert recorded[4][-1] == str(hashed_requirements(HASHED_REQUIREMENTS))
+    assert recorded[4][-1] == str(hashed_requirements(RUNTIME_HASHED_REQUIREMENTS))
+    assert recorded[5][1:4] == ["-m", "pip", "install"]
+    assert "--require-hashes" in recorded[5]
+    assert recorded[5][-1] == str(hashed_requirements(HASHED_REQUIREMENTS))
     assert ensured == [python]
     stamp = json.loads((tmp_path / ".cache" / "ansible-plaibook" / "sandbox-runtime.json").read_text())
     assert stamp["spec"] == "git+https://example/plaibook.git@abc"
@@ -332,8 +337,7 @@ def test_prepare_runtime_rebuilds_when_hashed_locks_change(monkeypatch, tmp_path
     python = prepare_sandbox_runtime(stderr=None, home=tmp_path)
     assert python == str(runtime / "bin" / "python")
     assert recorded[0][:3] == [str(base), "-m", "venv"]
-    assert recorded[1][1:4] == ["-m", "pip", "wheel"]
-    assert "--require-hashes" in recorded[2]
+    assert "--no-build-isolation" in recorded[2]
     stamp = json.loads((cache / "sandbox-runtime.json").read_text())
     assert stamp["locks"] == "new-lock"
 

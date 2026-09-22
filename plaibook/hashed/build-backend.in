@@ -1,0 +1,4 @@
+# pyproject.toml build-system.requires for sandbox-runtime pip wheel
+# --no-build-isolation. Compile: scripts/compile-hashed-sdks.sh
+setuptools>=68.0
+wheel

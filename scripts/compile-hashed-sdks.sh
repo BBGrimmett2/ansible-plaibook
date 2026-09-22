@@ -22,3 +22,6 @@ uv pip compile --generate-hashes --python-version 3.11 --no-annotate \
 
 uv pip compile --generate-hashes --python-version 3.11 --no-annotate \
   plaibook/hashed/sandbox-runtime.in -o plaibook/hashed/sandbox-runtime-requirements.txt
+
+uv pip compile --generate-hashes --python-version 3.11 --no-annotate \
+  plaibook/hashed/build-backend.in -o plaibook/hashed/build-backend-requirements.txt

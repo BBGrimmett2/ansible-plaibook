@@ -14,6 +14,7 @@ def test_hashed_requirements_exist():
         "cursor-requirements.txt",
         "openshell-requirements.txt",
         "sandbox-runtime-requirements.txt",
+        "build-backend-requirements.txt",
     ):
         path = hashed_requirements(name)
         text = path.read_text(encoding="utf-8")
@@ -41,6 +42,9 @@ def test_pinned_versions_reads_top_level_dists():
     assert "cursor-sdk" in runtime
     assert "jinja2" in runtime
     assert "pyyaml" in runtime
+    backend = pinned_versions("build-backend-requirements.txt")
+    assert "setuptools" in backend
+    assert "wheel" in backend
 
 
 def test_lock_digest_changes_when_file_changes():
