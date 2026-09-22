@@ -71,14 +71,12 @@
     # TLS cert SANs and always resolves to the primary listener.
     sandbox_gateway: "https://host.openshell.internal:17670"
     sandbox_image: "ghcr.io/nvidia/openshell-community/sandboxes/base:latest"
-    # Defaults to the controller's own resolved interpreter (picks up
-    # host_vars-level ansible_python_interpreter overrides, e.g. a local
-    # venv with openshell installed) rather than a hardcoded "python3" —
-    # SSH's ProxyCommand execs this as a raw subprocess, completely
-    # bypassing whatever interpreter Ansible itself uses for module
-    # invocations, so a plain "python3" here can silently land on a
-    # system interpreter that doesn't have openshell installed at all.
-    ssh_proxy_python: "{{ ansible_python_interpreter | default('python3') }}"
+    # SSH ProxyCommand runs on the controller, not in the sandbox.
+    # ansible_playbook_python is this process (the 3.11 sandbox-runtime
+    # after plai re-execs). Do not use ansible_python_interpreter here:
+    # that extra-var/set_fact leaks into delegate_to: sandbox_target and
+    # the Mac venv path does not exist inside the guest.
+    ssh_proxy_python: "{{ ansible_playbook_python | default('python3') }}"
     # Local-dev-friendly default, same as sandbox_gateway/sandbox_tls_source
     # below -- this personal checkout path doesn't exist inside a real AAP
     # execution pod. Any real AAP Job Template must override this via
@@ -210,14 +208,15 @@
         review_started_epoch: "{{ lookup('pipe', 'date +%s') | int }}"
 
     # connection: local can otherwise auto-discover a different system
-    # Python for module execution than the interpreter running ansible-
-    # playbook itself. That split is especially dangerous for provider SDKs:
-    # the preflight can pass while the first provider module fails to import.
-    # Preserve an explicit host_vars/extra-vars override, but make the
-    # default deterministic and aligned with the controller process.
+    # Python than ansible-playbook. Set the magic var only when this
+    # play stays on localhost: extra-vars/set_fact win over add_host
+    # auto_silent, and a controller venv path does not exist in the guest.
+    # Sandboxed runs rely on ansible_playbook_python for localhost
+    # (ansible-core 2.16+ connection: local) and auto_silent on sandbox_target.
     - name: Align local module execution with the playbook interpreter
+      when: not (use_sandbox | bool)
       ansible.builtin.set_fact:
-        ansible_python_interpreter: "{{ ansible_python_interpreter | default(ansible_playbook_python) }}"
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
     - name: Split survey-provided newline-separated targets into a list
       when: >-

@@ -158,6 +158,38 @@ def test_extra_vars_sandbox_and_passthrough():
     assert extras["use_sandbox"] is True
 
 
+def test_cmd_review_does_not_pass_controller_interpreter_as_extra_var(tmp_path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "review.yml").write_text("---\n")
+    (checkout / "ansible.cfg").write_text("[defaults]\n")
+    home = tmp_path / "home"
+    (home / ".cache" / "ansible-plaibook").mkdir(parents=True)
+    seen = {}
+
+    def fake_run(command, *, playbook_root, verbose, env=None):
+        extras = json.loads(command[command.index("-e") + 1])
+        seen["extras"] = extras
+        path = last_run_path(extras["last_run_id"], home=home)
+        path.write_text(json.dumps({"run_id": extras["last_run_id"], "status": "ok", "targets": []}))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr("plaibook.cli.openshell_available", lambda: True)
+    monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: False)
+    monkeypatch.setattr("plaibook.cli.reexec_sandbox_runtime", lambda **kwargs: None)
+    monkeypatch.setattr("plaibook.cli.run_ansible_playbook", fake_run)
+    monkeypatch.setattr(
+        "plaibook.cli.build_ansible_command",
+        lambda **kwargs: build_ansible_command(ansible_bin="ansible-playbook", **kwargs),
+    )
+    monkeypatch.setattr("plaibook.cli.last_run_path", lambda run_id: last_run_path(run_id, home=home))
+
+    code = cmd_review(_args(target="org/repo/1", playbook_root=str(checkout), use_sandbox=False))
+    assert code == 0
+    assert "ansible_python_interpreter" not in seen["extras"]
+
+
 def test_cmd_review_skips_resolve_family_when_agent_family_extra(tmp_path, monkeypatch):
     checkout = tmp_path / "checkout"
     checkout.mkdir()

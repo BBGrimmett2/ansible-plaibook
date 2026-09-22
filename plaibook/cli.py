@@ -421,7 +421,6 @@ def cmd_review(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    extras.setdefault("ansible_python_interpreter", sys.executable)
     if _wants_sandbox(extras):
         try:
             reexec_sandbox_runtime(stderr=sys.stderr)
@@ -451,7 +450,6 @@ def cmd_review(args: argparse.Namespace) -> int:
     if sandbox_error:
         print(sandbox_error, file=sys.stderr)
         return 2
-    extras.setdefault("ansible_python_interpreter", sys.executable)
     try:
         command = build_ansible_command(
             extra_vars=extras,

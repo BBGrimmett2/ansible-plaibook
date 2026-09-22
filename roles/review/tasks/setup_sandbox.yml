@@ -50,12 +50,10 @@
     ansible_user: sandbox
     ansible_connection: ssh
     # Without this, delegate_to tasks inherit the CONTROLLER's own
-    # ansible_python_interpreter (e.g. host_vars/localhost.yml's local
-    # venv override for openshell) instead of discovering the
-    # sandbox's own interpreter — a well-known Ansible gotcha where
-    # ansible_python_interpreter doesn't automatically switch to the
-    # delegated-to host's value. auto_silent forces real discovery
-    # inside the sandbox instead.
+    # ansible_python_interpreter (play set_fact / host_vars / extra-vars)
+    # instead of discovering the sandbox's own interpreter. extra-vars
+    # would still win over this host var, so plai must not pass
+    # ansible_python_interpreter on the command line.
     ansible_python_interpreter: auto_silent
     # quote (shlex-style single-quoting) on every interpolated value —
     # this whole string is inside the outer double quotes Ansible/shlex
