@@ -640,6 +640,24 @@ def test_pretty_explains_same_commit_cache_hit():
     assert "$0.0000" in pretty
 
 
+def test_pretty_notes_incomplete_exploration():
+    pretty = format_pretty(
+        {
+            "status": "ok",
+            "exploration_incomplete": True,
+            "targets": [
+                {
+                    "target": "org/repo#1",
+                    "verdict": "READY_FOR_HUMAN_REVIEW",
+                    "score": 96.7,
+                }
+            ],
+        }
+    )
+    assert "exploration incomplete" in pretty
+    assert "READY_FOR_HUMAN_REVIEW" in pretty
+
+
 def test_pretty_explains_ci_preflight_skip_without_full_report():
     pretty = format_pretty(
         {

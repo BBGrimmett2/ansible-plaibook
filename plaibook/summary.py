@@ -137,6 +137,8 @@ def format_pretty(document: dict[str, Any], *, full: bool = False) -> str:
         if name:
             header = f"{header}  {name}"
         lines.append(header)
+        if document.get("exploration_incomplete"):
+            lines.append("  exploration incomplete (a search did not finish; that is not 'no matches')")
 
         cache_line = _cache_hit_line(document, target)
         if cache_line:

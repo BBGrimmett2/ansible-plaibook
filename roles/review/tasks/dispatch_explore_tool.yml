@@ -283,22 +283,23 @@
                'tool_use_id': tool_call.id,
                'content': (_explore_search_result.stdout if (_explore_search_result.rc | default(2) | int) == 0
                            else '(no matches)') if not _explore_search_failed
-                           else 'ERROR: search did not complete cleanly; no result is available',
+                           else (
+                             'ERROR: search did not complete cleanly; no result is available. '
+                             ~ 'Do not treat this as no matches. rc='
+                             ~ (_explore_search_result.rc | default('unknown') | string)
+                             ~ ((' ' ~ (_explore_search_result.msg | default(''))) if (_explore_search_result.msg | default('')) else '')
+                             ~ ((' ' ~ (_explore_search_result.stderr | default('') | trim)) if (_explore_search_result.stderr | default('') | trim) else '')
+                           ),
                'is_error': _explore_search_failed
              }] }}
       when: not _explore_search_path_rejected
 
-    # Do not let a failed grep masquerade as a successful empty search. The
-    # tool result above is still constructed for traceability, but the review
-    # must stop before the model can turn the error into a false conclusion.
-    - name: Fail closed when exploration search fails or times out
-      ansible.builtin.fail:
-        msg: >-
-          Exploration search failed or timed out (rc={{ _explore_search_result.rc | default('unknown') }}).
-          {{ _explore_search_result.msg | default('') }}
-          {{ _explore_search_result.stderr | default('') | trim }}
-          No clean search result was returned, so the review cannot safely
-          claim that the requested pattern has no matches.
+    # Fail-closed for the MODEL (is_error, never "(no matches)"), not the
+    # play. Aborting here threw away a finished lens pass. The explore
+    # loop already continues on read_file/trace errors the same way.
+    - name: Mark exploration incomplete when search did not finish cleanly
+      ansible.builtin.set_fact:
+        review_exploration_incomplete: true
       when: not _explore_search_path_rejected and (_explore_search_failed | bool)
 
 - name: "Dispatch tool: trace_reachability"
