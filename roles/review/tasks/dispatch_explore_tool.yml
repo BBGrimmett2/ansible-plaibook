@@ -242,12 +242,13 @@
       register: _explore_search_result
       changed_when: false
       failed_when: false
-      # A hard ceiling as well as the exclusions: the exclusion list is
-      # what is known to be big today, and the next repo will have
-      # something else. A search that cannot finish in two minutes is
-      # not going to produce a useful result for a reviewer either.
-      async: "{{ review_explore_tool_timeout_seconds | int }}"
-      poll: 2
+      # Do not use Ansible async here. async_wrapper daemonizes on the
+      # delegated host and the poll SSH session looks for ~/.ansible_async.
+      # OpenShell's russh guest drops that background job when the start
+      # channel closes, so the poll result has no rc (this fail used to
+      # print rc=unknown). Task timeout still caps a runaway grep on the
+      # controller side of the SSH exec.
+      timeout: "{{ review_explore_tool_timeout_seconds | int }}"
       when: not _explore_search_path_rejected
 
     - name: Fail loudly if the sandbox connection was unreachable
@@ -294,6 +295,8 @@
       ansible.builtin.fail:
         msg: >-
           Exploration search failed or timed out (rc={{ _explore_search_result.rc | default('unknown') }}).
+          {{ _explore_search_result.msg | default('') }}
+          {{ _explore_search_result.stderr | default('') | trim }}
           No clean search result was returned, so the review cannot safely
           claim that the requested pattern has no matches.
       when: not _explore_search_path_rejected and (_explore_search_failed | bool)
