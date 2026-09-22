@@ -1169,6 +1169,7 @@ def test_cmd_review_pr_fails_closed_without_openshell(tmp_path, monkeypatch, cap
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr("plaibook.cli.openshell_available", lambda: False)
     monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: False)
+    monkeypatch.setattr("plaibook.cli.ensure_openshell_sdk", lambda **kwargs: None)
     monkeypatch.setattr(
         "plaibook.cli.run_ansible_playbook",
         lambda *args, **kwargs: called.append(True),

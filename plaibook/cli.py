@@ -17,6 +17,7 @@ from plaibook.config import (
     resolve_family,
     running_inside_openshell,
 )
+from plaibook.openshell_sdk import OpenshellSdkError, ensure_openshell_sdk
 from plaibook.playbook import (
     PlaybookNotFoundError,
     PlaybookTimeoutError,
@@ -132,10 +133,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     mode.add_argument(
         "--commit",
         action="store_true",
-        help=(
-            "review_type=commit. Default when no PR/MR target is given "
-            "(reviews HEAD in the current directory)."
-        ),
+        help=("review_type=commit. Default when no PR/MR target is given (reviews HEAD in the current directory)."),
     )
     mode.add_argument(
         "--branch",
@@ -158,10 +156,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         "--verbose",
         action="count",
         default=0,
-        help=(
-            "Pass -v to ansible-playbook (task names). Repeat for more "
-            "(-vv / --debug shows module args)."
-        ),
+        help=("Pass -v to ansible-playbook (task names). Repeat for more (-vv / --debug shows module args)."),
     )
     review.add_argument(
         "--debug",
@@ -292,8 +287,7 @@ def extra_vars_from_args(args: argparse.Namespace, run_id: str) -> dict:
         key, value = _parse_extra_var(item)
         if key == "last_run_id":
             raise ValueError(
-                "last_run_id is owned by the CLI; omit -e last_run_id= "
-                "(the wrapper already generates one)."
+                "last_run_id is owned by the CLI; omit -e last_run_id= (the wrapper already generates one)."
             )
         extras[key] = value
     return extras
@@ -330,6 +324,17 @@ def _validate_review_args(args: argparse.Namespace) -> str | None:
         return None
     args.commit = True
     return None
+
+
+def _wants_sandbox(extras: dict) -> bool:
+    """True when this run will create an OpenShell sandbox."""
+    if extras.get("use_sandbox") is False:
+        return False
+    if running_inside_openshell() and extras.get("use_sandbox") is not True:
+        return False
+    if extras.get("use_sandbox") is True:
+        return True
+    return extras.get("review_type") != "commit"
 
 
 def _apply_sandbox_fallback(args: argparse.Namespace, extras: dict) -> str | None:
@@ -393,11 +398,7 @@ def cmd_review(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        root = (
-            Path(args.playbook_root).expanduser().resolve()
-            if args.playbook_root
-            else find_playbook_root()
-        )
+        root = Path(args.playbook_root).expanduser().resolve() if args.playbook_root else find_playbook_root()
         if args.playbook_root and not ((root / "review.yml").is_file() and (root / "ansible.cfg").is_file()):
             print(
                 f"--root {root} does not contain review.yml and ansible.cfg",
@@ -421,6 +422,12 @@ def cmd_review(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     extras.setdefault("ansible_python_interpreter", sys.executable)
+    if _wants_sandbox(extras):
+        try:
+            ensure_openshell_sdk(stderr=sys.stderr)
+        except OpenshellSdkError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     if getattr(args, "provider", None) or "agent_family" not in extras:
         try:
             resolve_family(

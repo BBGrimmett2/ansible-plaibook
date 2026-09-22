@@ -351,6 +351,9 @@
         # (including every review_type: commit) run instead of three --
         # see roles/review/tasks/setup_sandbox_and_mtls.yml's own header comment for
         # why this is include_tasks + when, not block + when.
+        - name: Ensure collections and the OpenShell SDK this play needs
+          ansible.builtin.include_tasks: roles/review/tasks/ensure_runtime_deps.yml
+
         - name: Set up an OpenShell sandbox for isolated script execution
           when: use_sandbox | bool
           ansible.builtin.include_tasks: roles/review/tasks/setup_sandbox_and_mtls.yml

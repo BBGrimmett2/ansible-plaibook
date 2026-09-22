@@ -1,0 +1,44 @@
+---
+# Collections are also installed by the plai CLI before ansible-playbook.
+# This task covers `ansible-playbook review.yml` and a controller whose
+# openshell pip package is missing or is an editable 0.0.0a0 that
+# `pip install --upgrade` will not replace. Sandbox modules import the
+# SDK in a later process, so the install has to finish before
+# aknochow.openshell.sandbox runs.
+
+- name: Ensure review collections are installed
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_python_interpreter | default(ansible_playbook_python) }}"
+      - -c
+      - |
+        import sys
+        from pathlib import Path
+        from plaibook.collections import CollectionInstallError, ensure_collections
+        try:
+            ensure_collections(Path(sys.argv[1]))
+        except CollectionInstallError as exc:
+            print(exc, file=sys.stderr)
+            sys.exit(1)
+      - "{{ playbook_dir }}"
+  register: _ensure_collections
+  changed_when: "'Installing Ansible collections' in (_ensure_collections.stderr | default(''))"
+  timeout: 600
+
+- name: Ensure the OpenShell SDK is installed for sandbox reviews
+  when: use_sandbox | bool
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_python_interpreter | default(ansible_playbook_python) }}"
+      - -c
+      - |
+        import sys
+        from plaibook.openshell_sdk import OpenshellSdkError, ensure_openshell_sdk
+        try:
+            ensure_openshell_sdk()
+        except OpenshellSdkError as exc:
+            print(exc, file=sys.stderr)
+            sys.exit(1)
+  register: _ensure_openshell_sdk
+  changed_when: "'Installing OpenShell SDK' in (_ensure_openshell_sdk.stderr | default(''))"
+  timeout: 300
