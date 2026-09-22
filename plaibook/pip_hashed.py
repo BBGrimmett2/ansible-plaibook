@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -37,6 +38,16 @@ def pinned_versions(filename: str) -> dict[str, str]:
             continue
         pins[_normalize_dist(match.group(1))] = match.group(2)
     return pins
+
+
+def lock_digest(*filenames: str) -> str:
+    """Stable identity of hashed requirement files (stamp / cache keys)."""
+    digest = hashlib.sha256()
+    for name in filenames:
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashed_requirements(name).read_bytes())
+    return digest.hexdigest()
 
 
 def _normalize_dist(name: str) -> str:

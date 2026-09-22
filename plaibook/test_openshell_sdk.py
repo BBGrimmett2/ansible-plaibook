@@ -12,6 +12,7 @@ import pytest
 
 from plaibook.openshell_sdk import (
     HASHED_REQUIREMENTS,
+    RUNTIME_HASHED_REQUIREMENTS,
     SDK_SPEC,
     OpenshellSdkError,
     ensure_openshell_sdk,
@@ -221,15 +222,20 @@ def test_prepare_runtime_creates_venv_and_installs(monkeypatch, tmp_path):
     assert python == str(runtime / "bin" / "python")
     assert recorded[0][:3] == [str(base), "-m", "venv"]
     assert recorded[1][1:4] == ["-m", "pip", "install"]
+    assert "--no-deps" in recorded[1]
     assert recorded[1][-1] == "git+https://example/plaibook.git@abc"
     assert SDK_SPEC not in recorded[1]
     assert "--require-hashes" not in recorded[1]
     assert recorded[2][1:4] == ["-m", "pip", "install"]
     assert "--require-hashes" in recorded[2]
-    assert recorded[2][-1] == str(hashed_requirements(HASHED_REQUIREMENTS))
+    assert recorded[2][-1] == str(hashed_requirements(RUNTIME_HASHED_REQUIREMENTS))
+    assert recorded[3][1:4] == ["-m", "pip", "install"]
+    assert "--require-hashes" in recorded[3]
+    assert recorded[3][-1] == str(hashed_requirements(HASHED_REQUIREMENTS))
     assert ensured == [python]
     stamp = json.loads((tmp_path / ".cache" / "ansible-plaibook" / "sandbox-runtime.json").read_text())
     assert stamp["spec"] == "git+https://example/plaibook.git@abc"
+    assert stamp["locks"]
 
 
 def test_prepare_runtime_reuses_matching_stamp(monkeypatch, tmp_path):
@@ -243,17 +249,72 @@ def test_prepare_runtime_reuses_matching_stamp(monkeypatch, tmp_path):
     base.write_text("")
     spec = "git+https://example/plaibook.git@abc"
     (cache / "sandbox-runtime.json").write_text(
-        json.dumps({"base": str(base.resolve()), "base_version": "3.11.11", "spec": spec}) + "\n"
+        json.dumps(
+            {
+                "base": str(base.resolve()),
+                "base_version": "3.11.11",
+                "spec": spec,
+                "locks": "lock-id",
+            }
+        )
+        + "\n"
     )
     calls = []
     monkeypatch.setattr("plaibook.openshell_sdk.find_sdk_python", lambda: str(base))
     monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda: spec)
     monkeypatch.setattr("plaibook.openshell_sdk.interpreter_version", lambda _exe: (3, 11, 11))
+    monkeypatch.setattr("plaibook.openshell_sdk._runtime_lock_id", lambda: "lock-id")
     monkeypatch.setattr("plaibook.openshell_sdk.subprocess.run", lambda *a, **k: calls.append(a))
     monkeypatch.setattr("plaibook.openshell_sdk.ensure_openshell_sdk", lambda python, **kwargs: None)
     python = prepare_sandbox_runtime(stderr=None, home=tmp_path)
     assert python == str(bindir / "python")
     assert calls == []
+
+
+def test_prepare_runtime_rebuilds_when_hashed_locks_change(monkeypatch, tmp_path):
+    cache = tmp_path / ".cache" / "ansible-plaibook"
+    runtime = cache / "sandbox-runtime"
+    bindir = runtime / "bin"
+    bindir.mkdir(parents=True)
+    (bindir / "python").write_text("")
+    (bindir / "plai").write_text("")
+    base = tmp_path / "python3.11"
+    base.write_text("")
+    spec = "git+https://example/plaibook.git@abc"
+    (cache / "sandbox-runtime.json").write_text(
+        json.dumps(
+            {
+                "base": str(base.resolve()),
+                "base_version": "3.11.11",
+                "spec": spec,
+                "locks": "old-lock",
+            }
+        )
+        + "\n"
+    )
+    recorded = []
+
+    def fake_run(cmd, **kwargs):
+        recorded.append(list(cmd))
+        if cmd[1:3] == ["-m", "venv"]:
+            new_bindir = Path(cmd[-1]) / "bin"
+            new_bindir.mkdir(parents=True)
+            (new_bindir / "python").write_text("")
+            (new_bindir / "plai").write_text("")
+        return SimpleNamespace(returncode=0, stdout="3.11.11\n", stderr="")
+
+    monkeypatch.setattr("plaibook.openshell_sdk.find_sdk_python", lambda: str(base))
+    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda: spec)
+    monkeypatch.setattr("plaibook.openshell_sdk.interpreter_version", lambda _exe: (3, 11, 11))
+    monkeypatch.setattr("plaibook.openshell_sdk._runtime_lock_id", lambda: "new-lock")
+    monkeypatch.setattr("plaibook.openshell_sdk.subprocess.run", fake_run)
+    monkeypatch.setattr("plaibook.openshell_sdk.ensure_openshell_sdk", lambda python, **kwargs: None)
+    python = prepare_sandbox_runtime(stderr=None, home=tmp_path)
+    assert python == str(runtime / "bin" / "python")
+    assert recorded[0][:3] == [str(base), "-m", "venv"]
+    assert "--no-deps" in recorded[1]
+    stamp = json.loads((cache / "sandbox-runtime.json").read_text())
+    assert stamp["locks"] == "new-lock"
 
 
 def test_prepare_runtime_refuses_symlink(monkeypatch, tmp_path):

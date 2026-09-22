@@ -13,6 +13,7 @@ def test_hashed_requirements_exist():
         "gemini-requirements.txt",
         "cursor-requirements.txt",
         "openshell-requirements.txt",
+        "sandbox-runtime-requirements.txt",
     ):
         path = hashed_requirements(name)
         text = path.read_text(encoding="utf-8")
@@ -35,3 +36,17 @@ def test_pinned_versions_reads_top_level_dists():
     assert pins["openshell"] == "0.0.116"
     openai = pinned_versions("openai-requirements.txt")
     assert "openai" in openai
+    runtime = pinned_versions("sandbox-runtime-requirements.txt")
+    assert "ansible-core" in runtime
+    assert "cursor-sdk" in runtime
+    assert "jinja2" in runtime
+    assert "pyyaml" in runtime
+
+
+def test_lock_digest_changes_when_file_changes():
+    from plaibook import pip_hashed
+
+    first = pip_hashed.lock_digest("openshell-requirements.txt")
+    second = pip_hashed.lock_digest("openshell-requirements.txt", "sandbox-runtime-requirements.txt")
+    assert first != second
+    assert len(first) == 64

@@ -19,3 +19,6 @@ compile_310 cursor
 
 uv pip compile --generate-hashes --python-version 3.11 --no-annotate \
   plaibook/hashed/openshell.in -o plaibook/hashed/openshell-requirements.txt
+
+uv pip compile --generate-hashes --python-version 3.11 --no-annotate \
+  plaibook/hashed/sandbox-runtime.in -o plaibook/hashed/sandbox-runtime-requirements.txt

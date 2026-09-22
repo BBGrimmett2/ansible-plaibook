@@ -1,0 +1,7 @@
+# pyproject.toml dependencies for python_version >= 3.11.
+# Used by prepare_sandbox_runtime after `pip install --no-deps` of this
+# plaibook build. Compile: scripts/compile-hashed-sdks.sh
+ansible-core>=2.16.0,<2.20.0
+pyyaml>=6.0.0
+jinja2>=3.1.0
+cursor-sdk>=1.0.31,<2.0.0
