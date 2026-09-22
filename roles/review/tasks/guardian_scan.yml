@@ -68,7 +68,7 @@
     # next colon, then a later @github / @gitlab / @bitbucket mention.
     # PR metadata (https://github.com/.../pull/N) plus an @github-advanced-security
     # review comment is that shape and is not a credential. Real userinfo
-    # (https://user:secret@github.com) is kept — its @ is not preceded by
+    # (https://user:PASSWORD@github.com) is kept — its @ is not preceded by
     # whitespace. Same helper as filter_plugins/scan_input.py.
     - name: Keep @host mentions from spanning into a git-credential match
       ansible.builtin.set_fact:

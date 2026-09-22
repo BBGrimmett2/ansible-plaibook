@@ -5,7 +5,7 @@
 the next colon, then a later ``@github`` / ``@gitlab`` / ``@bitbucket``
 mention. PR metadata (``https://github.com/.../pull/N``) plus an
 ``@github-advanced-security`` review comment is that shape and is not a
-credential. Real userinfo (``https://user:secret@github.com``) stays,
+credential. Real userinfo (``https://user:PASSWORD@github.com``) stays,
 because that ``@`` is not preceded by whitespace.
 """
 

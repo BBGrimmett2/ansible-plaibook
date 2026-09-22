@@ -32,11 +32,12 @@
 {% endif %}
 
 ### Scores
+{% set scored_findings = deduped_findings | rejectattr('evidence_status', 'equalto', 'refuted') | list %}
 | Lens | Score | Findings |
 |---|---|---|
-| Functionality | {{ '%.1f' | format(score_functionality | float) }}% | {{ deduped_findings | selectattr('lens', 'equalto', 'Functionality') | list | length }} |
-| Security | {{ '%.1f' | format(score_security | float) }}% | {{ deduped_findings | selectattr('lens', 'equalto', 'Security') | list | length }} |
-| Quality | {{ '%.1f' | format(score_quality | float) }}% | {{ deduped_findings | selectattr('lens', 'equalto', 'Quality') | list | length }} |
+| Functionality | {{ '%.1f' | format(score_functionality | float) }}% | {{ scored_findings | selectattr('lens', 'equalto', 'Functionality') | list | length }} |
+| Security | {{ '%.1f' | format(score_security | float) }}% | {{ scored_findings | selectattr('lens', 'equalto', 'Security') | list | length }} |
+| Quality | {{ '%.1f' | format(score_quality | float) }}% | {{ scored_findings | selectattr('lens', 'equalto', 'Quality') | list | length }} |
 | **Overall** | **{{ '%.1f' | format(score_overall | float) }}%** | |
 
 ### Findings

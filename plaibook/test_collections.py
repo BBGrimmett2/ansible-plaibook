@@ -21,6 +21,7 @@ from plaibook.collections import (
     collections_dir,
     collections_lock_path,
     ensure_collections,
+    git_url_has_userinfo,
     install_git_sources,
     merge_collections_path,
     redact_git_userinfo,
@@ -30,6 +31,9 @@ from plaibook.collections import (
 from plaibook.playbook import run_ansible_playbook
 
 GIT_TEST_TIMEOUT = 30
+# ai-guardian credentials-in-git-url ignores this placeholder; a literal
+# 8+ character password would trip SECRET-001 on the PR diff.
+_USERINFO_PASSWORD = "PASSWORD"
 
 
 def _plant(dest, *keys):
@@ -476,7 +480,7 @@ def test_git_fetch_error_redacts_userinfo(tmp_path, monkeypatch):
     monkeypatch.setattr("plaibook.collections.time.sleep", lambda *_a, **_k: None)
 
     def boom(*_args, **_kwargs):
-        raise OSError("auth failed for https://user:supersecret1@github.com/org/repo.git")
+        raise OSError(f"auth failed for https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git")
 
     monkeypatch.setattr("plaibook.collections.subprocess.run", boom)
     dest = tmp_path / "checkout"
@@ -485,12 +489,77 @@ def test_git_fetch_error_redacts_userinfo(tmp_path, monkeypatch):
     with pytest.raises(CollectionInstallError, match="git fetch failed") as raised:
         _clone_at_ref(url, sha, dest, env={"GIT_TERMINAL_PROMPT": "0"})
     message = str(raised.value)
-    assert "supersecret1" not in message
+    assert _USERINFO_PASSWORD not in message
     assert "user:" not in message
     assert "github.com/org/repo.git" in message
-    assert redact_git_userinfo("https://user:supersecret1@github.com/org/repo.git") == (
+    assert redact_git_userinfo(f"https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git") == (
         "https://github.com/org/repo.git"
     )
+
+
+@pytest.mark.parametrize(
+    ("raw", "cleaned"),
+    [
+        (
+            f"https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git",
+            "https://github.com/org/repo.git",
+        ),
+        (
+            f"git+https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git",
+            "git+https://github.com/org/repo.git",
+        ),
+        (
+            f"ssh://user:{_USERINFO_PASSWORD}@example.com/repo.git",
+            "ssh://example.com/repo.git",
+        ),
+        (
+            f"git+ssh://user:{_USERINFO_PASSWORD}@example.com/repo.git",
+            "git+ssh://example.com/repo.git",
+        ),
+        (
+            f"file://user:{_USERINFO_PASSWORD}@localhost/tmp/repo.git",
+            "file://localhost/tmp/repo.git",
+        ),
+        (
+            "https://TOKEN@github.com/org/repo.git",
+            "https://github.com/org/repo.git",
+        ),
+    ],
+)
+def test_redact_git_userinfo_covers_accepted_schemes(raw, cleaned):
+    assert redact_git_userinfo(raw) == cleaned
+    assert _USERINFO_PASSWORD not in redact_git_userinfo(raw)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git",
+        f"git+https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git",
+        f"ssh://user:{_USERINFO_PASSWORD}@example.com/repo.git",
+        f"git+ssh://user:{_USERINFO_PASSWORD}@example.com/repo.git",
+        f"file://user:{_USERINFO_PASSWORD}@localhost/tmp/repo.git",
+        "https://TOKEN@github.com/org/repo.git",
+    ],
+)
+def test_git_url_has_userinfo_rejects_embedded_credentials(url):
+    assert git_url_has_userinfo(url)
+    with pytest.raises(CollectionInstallError, match="must not embed credentials"):
+        require_commit_sha(url, "e98d9a0756458be1ac710988498000973889075c")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/org/repo.git",
+        "ssh://git@github.com/org/repo.git",
+        "git+ssh://git@github.com/org/repo.git",
+        "git@github.com:org/repo.git",
+        "file:///tmp/repo.git",
+    ],
+)
+def test_git_url_has_userinfo_allows_username_only_ssh_and_plain_urls(url):
+    assert not git_url_has_userinfo(url)
 
 
 def test_clone_strips_userinfo_from_git_remote_argv(monkeypatch, tmp_path):
@@ -506,27 +575,56 @@ def test_clone_strips_userinfo_from_git_remote_argv(monkeypatch, tmp_path):
     monkeypatch.setattr("plaibook.collections.require_commit_sha", lambda url, ref: str(ref).lower())
     monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
     dest = tmp_path / "checkout"
-    _clone_at_ref("https://user:supersecret1@github.com/org/repo.git", sha, dest)
+    _clone_at_ref(f"https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git", sha, dest)
     joined = " ".join(" ".join(cmd) for cmd in recorded)
-    assert "supersecret1" not in joined
+    assert _USERINFO_PASSWORD not in joined
     assert "user:" not in joined
     origin = next(cmd for cmd in recorded if cmd[:3] == ["git", "remote", "add"])
     assert origin[-1] == "https://github.com/org/repo.git"
 
 
-def test_ensure_collections_rejects_git_userinfo(tmp_path):
+def test_clone_strips_ssh_userinfo_from_git_remote_argv(monkeypatch, tmp_path):
+    sha = "e98d9a0756458be1ac710988498000973889075c"
+    recorded = []
+
+    def fake_run(cmd, **kwargs):
+        recorded.append(list(cmd))
+        if "rev-parse" in cmd:
+            return SimpleNamespace(returncode=0, stdout=f"{sha}\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("plaibook.collections.require_commit_sha", lambda url, ref: str(ref).lower())
+    monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
+    dest = tmp_path / "checkout"
+    _clone_at_ref(f"ssh://user:{_USERINFO_PASSWORD}@example.com/repo.git", sha, dest)
+    joined = " ".join(" ".join(cmd) for cmd in recorded)
+    assert _USERINFO_PASSWORD not in joined
+    origin = next(cmd for cmd in recorded if cmd[:3] == ["git", "remote", "add"])
+    assert origin[-1] == "ssh://example.com/repo.git"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        f"https://user:{_USERINFO_PASSWORD}@github.com/example/ansible-posix.git",
+        f"ssh://user:{_USERINFO_PASSWORD}@example.com/ansible-posix.git",
+        f"git+ssh://user:{_USERINFO_PASSWORD}@example.com/ansible-posix.git",
+        f"file://user:{_USERINFO_PASSWORD}@localhost/tmp/ansible-posix.git",
+    ],
+)
+def test_ensure_collections_rejects_git_userinfo(tmp_path, name):
     playbook = tmp_path / "playbook"
     playbook.mkdir()
     (playbook / "collections-requirements.yml").write_text(
         "collections:\n"
-        "  - name: https://user:supersecret1@github.com/example/ansible-posix.git\n"
+        f"  - name: {name}\n"
         "    type: git\n"
         "    version: e98d9a0756458be1ac710988498000973889075c\n"
     )
     home = tmp_path / "home"
     with pytest.raises(CollectionInstallError, match="must not embed credentials") as raised:
         ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
-    assert "supersecret1" not in str(raised.value)
+    assert _USERINFO_PASSWORD not in str(raised.value)
     assert not (collections_dir(home) / ".requirements.sha256").is_file()
 
 

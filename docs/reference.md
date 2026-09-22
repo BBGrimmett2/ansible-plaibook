@@ -40,7 +40,7 @@ status: stable
 | `review_openai_max_completion_tokens` | `16384` | Hosted OpenAI completion budget for lens, exploration, and verification calls. |
 | `review_openai_lens_reasoning_effort` | API default | Optional explicit `reasoning_effort` for hosted OpenAI lens calls, such as `low`, `medium`, `high`, `xhigh`, or `max`. Explore/verify tool calls remain on the hosted tool-compatible `none` setting. |
 | `review_openai_continuity_max_completion_tokens` | `review_openai_max_completion_tokens` | Completion budget for the no-tool continuity audit; prevents reasoning models from exhausting a small structured-output budget before returning JSON. |
-| `review_explore_tool_timeout_seconds` | `120` | Per-search wall-clock ceiling. A failed or timed-out search fails the review instead of being treated as an empty result. |
+| `review_explore_tool_timeout_seconds` | `120` | Per-search wall-clock ceiling, enforced with `subprocess.run(timeout=)` so ansible-core 2.16 (Python 3.10) still caps grep. A failed or timed-out search is an error tool result, never an empty result. |
 | `review_explore_max_tool_calls` | `12` | Total read-only exploration tool calls per target. |
 | `review_verify_model` | `claude-haiku-4-5` | Model used for the independent Critical/Major verification pass, deliberately a cheaper tier than the lens dispatch, since verification is lower-stakes per call and runs more often. |
 

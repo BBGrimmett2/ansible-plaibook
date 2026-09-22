@@ -80,19 +80,44 @@ def require_commit_sha(url: str, ref: object) -> str:
     raise CollectionInstallError(f"git collection {shown} must pin a 40-character commit SHA, not {ref!r}")
 
 
-_GIT_USERINFO_RE = re.compile(r"(https?://|git\+)[^/\s:@]+(?::[^/\s@]*)?@")
+# Password-bearing userinfo for every accepted scheme, including git+ssh://
+# and file://. The previous https/git+ -only pattern left ssh://user:PASSWORD@
+# and git+ssh://user:PASSWORD@ unredacted for `git remote add`.
+_GIT_PASSWORD_USERINFO_RE = re.compile(r"(?i)((?:git\+)?(?:https?|ssh|file|git)://)[^/\s:@]+:[^/\s@]*@")
+# Tokens often appear as https://TOKEN@host with no password component.
+_GIT_AUTHORITY_USERINFO_RE = re.compile(r"(?i)((?:git\+)?(?:https?|file)://)[^/\s:@]+@")
 _BASIC_AUTH_RE = re.compile(r"(?i)(AUTHORIZATION:\s*basic\s+)\S+")
+_GIT_PLUS_PREFIX = "git+"
+
+
+def _git_url_without_plus(url: str) -> str:
+    stripped = url.strip()
+    if stripped[:4].lower() == _GIT_PLUS_PREFIX:
+        return stripped[4:]
+    return stripped
 
 
 def redact_git_userinfo(text: str) -> str:
     """Drop userinfo and HTTP basic headers so errors cannot log credentials."""
-    text = _GIT_USERINFO_RE.sub(r"\1", text)
+    text = _GIT_PASSWORD_USERINFO_RE.sub(r"\1", text)
+    text = _GIT_AUTHORITY_USERINFO_RE.sub(r"\1", text)
     return _BASIC_AUTH_RE.sub(r"\1[redacted]", text)
 
 
 def git_url_has_userinfo(url: str) -> bool:
-    """True when a git URL embeds username/password/token in the authority."""
-    return _GIT_USERINFO_RE.search(url) is not None
+    """True when a git URL embeds username/password/token in the authority.
+
+    ``ssh://git@host/repo.git`` (username, no password) is the normal SSH
+    form and is allowed. ``ssh://user:PASSWORD@host`` is not. HTTP(S) and
+    ``file://`` reject any userinfo, including token-as-username.
+    """
+    parsed = urlparse(_git_url_without_plus(url))
+    scheme = parsed.scheme.lower()
+    if parsed.password:
+        return True
+    if parsed.username and scheme in {"http", "https", "file"}:
+        return True
+    return _GIT_PASSWORD_USERINFO_RE.search(url) is not None or _GIT_AUTHORITY_USERINFO_RE.search(url) is not None
 
 
 def _cleartext_http_git(url: str) -> bool:

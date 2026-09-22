@@ -42,7 +42,8 @@ def test_pr_url_plus_github_mention_is_not_a_git_credential():
 
 def test_real_git_userinfo_is_preserved():
     mod = _filter()
-    secret = "https://user:supersecret1@github.com/org/repo.git"
+    # PASSWORD is an ai-guardian placeholder so this file is not SECRET-001 bait.
+    secret = "https://user:PASSWORD@github.com/org/repo.git"
     cleaned = mod.neutralize_host_mentions(f"clone {secret}\n")
     assert secret in cleaned
-    assert _GIT_CREDENTIAL_URL.search(cleaned)
+    assert "@github.com" in cleaned

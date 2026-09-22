@@ -150,14 +150,39 @@ def test_spec_from_direct_url_pins_git_commit():
 def test_spec_from_direct_url_strips_userinfo():
     spec = spec_from_direct_url(
         {
-            "url": "https://user:supersecret1@github.com/aknochow/ansible-plaibook.git",
+            "url": "https://user:PASSWORD@github.com/aknochow/ansible-plaibook.git",
             "vcs_info": {"vcs": "git", "commit_id": "abc123"},
         },
         "0.1.0",
     )
     assert spec == "git+https://github.com/aknochow/ansible-plaibook.git@abc123"
-    assert "supersecret1" not in spec
+    assert "PASSWORD" not in spec
     assert "user:" not in spec
+
+
+def test_spec_from_direct_url_strips_ssh_userinfo():
+    spec = spec_from_direct_url(
+        {
+            "url": "ssh://user:PASSWORD@example.com/aknochow/ansible-plaibook.git",
+            "vcs_info": {"vcs": "git", "commit_id": "abc123"},
+        },
+        "0.1.0",
+    )
+    assert spec == "git+ssh://example.com/aknochow/ansible-plaibook.git@abc123"
+    assert "PASSWORD" not in spec
+    assert "user:" not in spec
+
+
+def test_spec_from_direct_url_strips_git_plus_ssh_userinfo():
+    spec = spec_from_direct_url(
+        {
+            "url": "git+ssh://user:PASSWORD@example.com/aknochow/ansible-plaibook.git",
+            "vcs_info": {"vcs": "git", "commit_id": "abc123"},
+        },
+        "0.1.0",
+    )
+    assert spec == "git+ssh://example.com/aknochow/ansible-plaibook.git@abc123"
+    assert "PASSWORD" not in spec
 
 
 def test_spec_from_direct_url_file_not_pypi():
