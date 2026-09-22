@@ -9,7 +9,7 @@
   block:
     - name: Resolve the effective local module interpreter
       ansible.builtin.set_fact:
-        _openai_runtime_python: "{{ ansible_python_interpreter | default(ansible_playbook_python) }}"
+        _openai_runtime_python: "{{ ansible_playbook_python | default(ansible_python_interpreter) }}"
 
     - name: Create a private temporary directory for ansible-doc
       ansible.builtin.tempfile:

@@ -92,7 +92,8 @@ def _git_token() -> str | None:
 GIT_AUTH_HEADER_ENV = "PLAIBOOK_GIT_AUTH_HEADER"
 # Git config key used by --config-env. Built in parts so the value never
 # sits in argv (process listings / CalledProcessError).
-_GIT_EXTRAHEADER_KEY = "http." + "https://github.com/" + ".extraHeader"
+_GH_HOST = "github.com"
+_GIT_EXTRAHEADER_KEY = "http.https://" + _GH_HOST + "/.extraHeader"
 
 
 def _github_https_header(value: str) -> str:

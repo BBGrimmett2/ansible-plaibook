@@ -8,6 +8,9 @@
 # `plai review` switches to ~/.cache/ansible-plaibook/sandbox-runtime
 # first. A direct ansible-playbook run on 3.10 fails here without
 # uninstalling an existing openshell.
+# Controller helper processes use ansible_playbook_python (this
+# ansible-playbook interpreter, 3.11 after re-exec). host_vars
+# ansible_python_interpreter can still name the original 3.10 venv.
 
 # No Ansible task `timeout:` here: ansible-core 2.16 (Python 3.10) does
 # not support that keyword, and async/poll is unsafe over OpenShell
@@ -17,7 +20,7 @@
 - name: Ensure review collections are installed
   ansible.builtin.command:
     argv:
-      - "{{ ansible_python_interpreter | default(ansible_playbook_python) }}"
+      - "{{ ansible_playbook_python | default(ansible_python_interpreter) }}"
       - -c
       - |
         import sys
@@ -35,7 +38,7 @@
 - name: Ensure the selected provider Python SDK is installed
   ansible.builtin.command:
     argv:
-      - "{{ ansible_python_interpreter | default(ansible_playbook_python) }}"
+      - "{{ ansible_playbook_python | default(ansible_python_interpreter) }}"
       - -c
       - |
         import sys
@@ -53,7 +56,7 @@
   when: use_sandbox | bool
   ansible.builtin.command:
     argv:
-      - "{{ ansible_python_interpreter | default(ansible_playbook_python) }}"
+      - "{{ ansible_playbook_python | default(ansible_python_interpreter) }}"
       - -c
       - |
         import sys

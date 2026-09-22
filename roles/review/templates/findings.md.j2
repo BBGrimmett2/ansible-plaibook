@@ -183,8 +183,8 @@ false-positive class on ordinary content this pipeline scans
 (PROMPT-INJECTION-001 on Python dunder methods like `__init__`,
 SSRF-001 on private-range IPs in test/example code) — a hit in either
 category is worth a skeptical read, not automatic action. Neither
-blocks the verdict. SECRET-001 still blocks, including a same-line
-credential in a git URL.
+blocks the verdict. SECRET-001 still blocks, including a git URL
+credential on one line or split across lines.
 {% if guardian_scan_truncated | default(false) %}
 
 Scan input was truncated to {{ review_guardian_max_scan_chars }} characters before scanning.

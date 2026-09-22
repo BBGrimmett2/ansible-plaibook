@@ -16,6 +16,7 @@ from plaibook.openshell_sdk import (
     RUNTIME_HASHED_REQUIREMENTS,
     SDK_SPEC,
     OpenshellSdkError,
+    _source_fingerprint,
     ensure_openshell_sdk,
     find_sdk_python,
     prepare_sandbox_runtime,
@@ -297,6 +298,7 @@ def test_prepare_runtime_creates_venv_and_installs(monkeypatch, tmp_path):
     stamp = json.loads((tmp_path / ".cache" / "ansible-plaibook" / "sandbox-runtime.json").read_text())
     assert stamp["spec"] == "git+https://example/plaibook.git@abc"
     assert stamp["locks"]
+    assert stamp["source"] == ""
 
 
 def test_prepare_runtime_reuses_matching_stamp(monkeypatch, tmp_path):
@@ -330,6 +332,60 @@ def test_prepare_runtime_reuses_matching_stamp(monkeypatch, tmp_path):
     python = prepare_sandbox_runtime(stderr=None, home=tmp_path)
     assert python == str(bindir / "python")
     assert calls == []
+
+
+def test_prepare_runtime_rebuilds_when_local_source_changes(monkeypatch, tmp_path):
+    checkout = tmp_path / "src"
+    checkout.mkdir()
+    (checkout / "mod.py").write_text("n = 1\n")
+    spec = str(checkout)
+    cache = tmp_path / ".cache" / "ansible-plaibook"
+    runtime = cache / "sandbox-runtime"
+    bindir = runtime / "bin"
+    bindir.mkdir(parents=True)
+    (bindir / "python").write_text("")
+    (bindir / "plai").write_text("")
+    base = tmp_path / "python3.11"
+    base.write_text("")
+
+    (cache / "sandbox-runtime.json").write_text(
+        json.dumps(
+            {
+                "base": str(base.resolve()),
+                "base_version": "3.11.11",
+                "spec": spec,
+                "locks": "lock-id",
+                "source": _source_fingerprint(spec),
+            }
+        )
+        + "\n"
+    )
+    recorded = []
+
+    def fake_run(cmd, **kwargs):
+        recorded.append(list(cmd))
+        if cmd[1:3] == ["-m", "venv"]:
+            new_bindir = Path(cmd[-1]) / "bin"
+            new_bindir.mkdir(parents=True)
+            (new_bindir / "python").write_text("")
+            (new_bindir / "plai").write_text("")
+        if len(cmd) > 3 and cmd[2] == "pip" and cmd[3] == "wheel":
+            out = Path(cmd[cmd.index("-w") + 1])
+            (out / "plaibook-0.1.7-py3-none-any.whl").write_bytes(b"wheel")
+        return SimpleNamespace(returncode=0, stdout="3.11.11\n", stderr="")
+
+    (checkout / "mod.py").write_text("n = 2\n")
+    monkeypatch.setattr("plaibook.openshell_sdk.find_sdk_python", lambda: str(base))
+    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda: spec)
+    monkeypatch.setattr("plaibook.openshell_sdk.interpreter_version", lambda _exe: (3, 11, 11))
+    monkeypatch.setattr("plaibook.openshell_sdk._runtime_lock_id", lambda: "lock-id")
+    monkeypatch.setattr("plaibook.openshell_sdk.subprocess.run", fake_run)
+    monkeypatch.setattr("plaibook.openshell_sdk.ensure_openshell_sdk", lambda python, **kwargs: None)
+    python = prepare_sandbox_runtime(stderr=None, home=tmp_path)
+    assert python == str(runtime / "bin" / "python")
+    assert recorded[0][:3] == [str(base), "-m", "venv"]
+    stamp = json.loads((cache / "sandbox-runtime.json").read_text())
+    assert stamp["source"] == _source_fingerprint(spec)
 
 
 def test_prepare_runtime_rebuilds_when_hashed_locks_change(monkeypatch, tmp_path):

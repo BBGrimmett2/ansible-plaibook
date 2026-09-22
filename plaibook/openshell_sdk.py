@@ -318,6 +318,7 @@ def _prepare_sandbox_runtime_locked(
     base_version = ".".join(str(part) for part in interpreter_version(base))
     stamp = _read_stamp(stamp_path)
     lock_id = _runtime_lock_id()
+    source = _source_fingerprint(spec)
     if (
         python.is_file()
         and plai.is_file()
@@ -325,6 +326,7 @@ def _prepare_sandbox_runtime_locked(
         and stamp.get("base_version") == base_version
         and stamp.get("spec") == spec
         and stamp.get("locks") == lock_id
+        and stamp.get("source", "") == source
     ):
         ensure_openshell_sdk(str(python), stderr=out)
         return str(python)
@@ -354,7 +356,13 @@ def _prepare_sandbox_runtime_locked(
         raise OpenshellSdkError(f"{plai} was not created by the runtime install.")
     _write_stamp(
         stamp_path,
-        {"base": base_key, "base_version": base_version, "spec": spec, "locks": lock_id},
+        {
+            "base": base_key,
+            "base_version": base_version,
+            "spec": spec,
+            "locks": lock_id,
+            "source": source,
+        },
     )
     ensure_openshell_sdk(str(python), stderr=out)
     return str(python)
@@ -507,6 +515,51 @@ def _write_stamp(path: Path, payload: dict) -> None:
 
 def _runtime_lock_id() -> str:
     return lock_digest(BUILD_BACKEND_REQUIREMENTS, RUNTIME_HASHED_REQUIREMENTS, HASHED_REQUIREMENTS)
+
+
+_SOURCE_SKIP_DIRS = frozenset(
+    {".git", ".venv", "venv", "__pycache__", "build", "dist", ".pytest_cache", "share"}
+)
+
+
+def _source_fingerprint(spec: str) -> str:
+    """Content hash of a local checkout used as the sandbox-runtime spec.
+
+    Git/URL specs are unchanged across source edits; a directory spec is
+    the checkout path, so the stamp must include file contents or an
+    editable install reuses a stale wheel.
+    """
+    root = Path(spec)
+    try:
+        if not root.is_dir():
+            return ""
+    except OSError:
+        return ""
+    digest = hashlib.sha256()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        rel_dir = Path(dirpath).relative_to(root)
+        if rel_dir.parts[:2] == ("plaibook", "share"):
+            dirnames[:] = []
+            continue
+        dirnames[:] = sorted(
+            name
+            for name in dirnames
+            if name not in _SOURCE_SKIP_DIRS and not name.endswith(".egg-info")
+        )
+        for name in sorted(filenames):
+            path = Path(dirpath) / name
+            if not path.is_file() or path.is_symlink():
+                continue
+            rel = path.relative_to(root).as_posix().encode()
+            try:
+                payload = path.read_bytes()
+            except OSError:
+                continue
+            digest.update(rel)
+            digest.update(b"\0")
+            digest.update(payload)
+            digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def _install_plaibook_hashed(venv_python: str, spec: str) -> None:

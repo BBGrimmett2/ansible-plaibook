@@ -409,12 +409,6 @@ def cmd_review(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    try:
-        ensure_collections(root, stderr=sys.stderr)
-    except CollectionInstallError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-
     run_id = generate_run_id()
     try:
         extras = extra_vars_from_args(args, run_id)
@@ -427,6 +421,12 @@ def cmd_review(args: argparse.Namespace) -> int:
         except OpenshellSdkError as exc:
             print(str(exc), file=sys.stderr)
             return 2
+
+    try:
+        ensure_collections(root, stderr=sys.stderr)
+    except CollectionInstallError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if getattr(args, "provider", None) or "agent_family" not in extras:
         try:
             resolve_family(
