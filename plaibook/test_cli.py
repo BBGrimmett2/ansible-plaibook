@@ -606,7 +606,8 @@ def test_pretty_and_json_from_last_run(tmp_path):
     assert "Major  plaibook/cli.py:42" in pretty
     assert "Default stdout only prints finding counts" in pretty
     assert "A human never sees why the score dropped" in pretty
-    assert "Example score still looks like a /10 scale." not in pretty
+    assert "Minor  docs/getting-started.md:86" in pretty
+    assert "Example score still looks like a /10 scale." in pretty
     assert "2 minor" in pretty
     assert "last_run:" in pretty
     assert "findings.md:" in pretty
@@ -638,6 +639,39 @@ def test_pretty_explains_same_commit_cache_hit():
     assert "$0.00 is expected" in pretty
     assert "Re-run with -f to force" in pretty
     assert "$0.0000" in pretty
+
+
+def test_pretty_explains_guardian_forced_needs_changes_at_100():
+    pretty = format_pretty(
+        {
+            "status": "ok",
+            "guardian_forced_needs_changes": True,
+            "guardian_blocking_rule_ids": ["SECRET-001"],
+            "targets": [
+                {
+                    "target": "org/repo#64",
+                    "verdict": "NEEDS_CHANGES",
+                    "score": 100.0,
+                    "scores": {"functionality": 100.0, "security": 100.0, "quality": 100.0},
+                    "findings_count": {"critical": 0, "major": 0, "minor": 0, "nit": 1},
+                    "findings": [
+                        {
+                            "severity": "Nit",
+                            "file": "plaibook/openshell_sdk.py",
+                            "line": 227,
+                            "description": "Sandbox-runtime creation is not serialized.",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert "NEEDS_CHANGES" in pretty
+    assert "100.0%" in pretty
+    assert "blocked by ai-guardian (SECRET-001)" in pretty
+    assert "independent of lens scores" in pretty
+    assert "Nit  plaibook/openshell_sdk.py:227" in pretty
+    assert "Sandbox-runtime creation is not serialized." in pretty
 
 
 def test_pretty_notes_incomplete_exploration():

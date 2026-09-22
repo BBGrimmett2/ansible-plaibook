@@ -558,6 +558,14 @@ review_guardian_pip_timeout_seconds: 60
 # exemption). Blocking on either right now would fail real reviews for
 # no real security gain.
 #
+# SECRET-001's credentials-in-git-url detector is the same shape: it
+# matches any https:// URL, a later colon, and a later @github across
+# the concatenated diff+PR text. Ordinary clone URLs plus a second
+# github.com URL, a git@github.com SSH form, or an
+# @github-advanced-security review comment trip it. Those findings
+# still appear in the Security Scan; they do not force NEEDS_CHANGES.
+# A GitHub PAT, cloud key, or other SECRET-001 hit still does.
+#
 # A list, not a single hardcoded value, so adding another confirmed-
 # reliable blocking category later is a config change, not a code
 # change, and so the actual rule_id string lives in exactly one place.

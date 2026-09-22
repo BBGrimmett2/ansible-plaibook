@@ -40,6 +40,37 @@ def test_pr_url_plus_github_mention_is_not_a_git_credential():
     assert _GIT_CREDENTIAL_URL.search(cleaned) is None
 
 
+def test_backtick_host_mention_is_not_a_git_credential():
+    mod = _filter()
+    text = (
+        "any ``https://`` URL, the next colon, then a later ``@github`` mention.\n"
+        "PR metadata (``https://github.com/org/repo/pull/1``) plus ``@github-advanced-security``.\n"
+    )
+    assert _GIT_CREDENTIAL_URL.search(text)
+    cleaned = mod.neutralize_host_mentions(text)
+    assert _GIT_CREDENTIAL_URL.search(cleaned) is None
+
+
+def test_blocking_guardian_findings_skips_credentials_in_git_url():
+    mod = _filter()
+    findings = [
+        {
+            "rule_id": "SECRET-001",
+            "message": "Secret detected: Credentials In Git Url",
+            "file_path": "ansible.xxx-ai-guardian-input.txt",
+        },
+        {
+            "rule_id": "SECRET-001",
+            "message": "Secret detected: GitHub Personal Access Token",
+            "file_path": "config.py",
+        },
+        {"rule_id": "PROMPT-INJECTION-001", "message": "Prompt injection detected"},
+    ]
+    blocking = mod.blocking_guardian_findings(findings, ["SECRET-001"])
+    assert len(blocking) == 1
+    assert blocking[0]["message"].startswith("Secret detected: GitHub Personal")
+
+
 def test_real_git_userinfo_is_preserved():
     mod = _filter()
     # PASSWORD is an ai-guardian placeholder so this file is not SECRET-001 bait.

@@ -178,18 +178,21 @@ Scan unavailable this run ({{ guardian_scan_skip_reason }}) — not run,
 not a clean result. Treat as "not scanned," not "nothing found."
 {% elif guardian_findings %}
 
-**PROMPT-INJECTION-001/SSRF-001 caveat**: both have a confirmed
-false-positive class on ordinary content this pipeline scans
-(PROMPT-INJECTION-001 on Python dunder methods like `__init__`,
-SSRF-001 on private-range IPs in test/example code) — a hit in either
-category is worth a skeptical read, not automatic action. Neither
-blocks the verdict.
+**PROMPT-INJECTION-001/SSRF-001/credentials-in-git-url caveat**:
+these have a confirmed false-positive class on ordinary content this
+pipeline scans (PROMPT-INJECTION-001 on Python dunder methods like
+`__init__`, SSRF-001 on private-range IPs in test/example code,
+SECRET-001 "Credentials In Git Url" on clone URLs plus a later
+`@github` in the concatenated diff/PR text) — a hit in any of those
+is worth a skeptical read, not automatic action. None of them
+blocks the verdict. Other SECRET-001 hits (tokens, cloud keys) still
+do.
 {% if guardian_scan_truncated | default(false) %}
 
 Scan input was truncated to {{ review_guardian_max_scan_chars }} characters before scanning.
 {% endif %}
 {% for f in guardian_findings %}
-{{ loop.index }}. **[{{ f.level | default('unknown') }}] {{ f.rule_id | default('unknown') }}**{{ ' 🔒 BLOCKING' if f.rule_id | default(None) in review_guardian_blocking_rule_ids else '' }}{{ ' — ' ~ f.file_path if f.file_path | default(None) else '' }}{{ ':' ~ f.line_number if f.line_number | default(None) else '' }}
+{{ loop.index }}. **[{{ f.level | default('unknown') }}] {{ f.rule_id | default('unknown') }}**{{ ' 🔒 BLOCKING' if f in guardian_blocking_findings else '' }}{{ ' — ' ~ f.file_path if f.file_path | default(None) else '' }}{{ ':' ~ f.line_number if f.line_number | default(None) else '' }}
    {{ f.message | default('(no message provided)') }}
 {% if f.snippet | default(None) %}
 {% set fence = evidence_fence(f.snippet) %}

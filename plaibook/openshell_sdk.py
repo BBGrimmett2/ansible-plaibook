@@ -11,6 +11,7 @@ Python 3.11+ it can find and re-execs that runtime's ``plai``. The
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -19,8 +20,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TextIO
+from typing import Iterator, TextIO
 from urllib.parse import unquote, urlparse
 
 from plaibook.collections import redact_git_userinfo
@@ -37,6 +39,7 @@ BUILD_BACKEND_REQUIREMENTS = "build-backend-requirements.txt"
 SDK_MIN_PYTHON = (3, 11)
 RUNTIME_DIRNAME = "sandbox-runtime"
 STAMP_NAME = "sandbox-runtime.json"
+LOCK_NAME = "sandbox-runtime.lock"
 ENV_REEXEC = "PLAIBOOK_SANDBOX_RUNTIME"
 _MIN = (0, 0, 116)
 _MAX = (0, 0, 120)
@@ -296,6 +299,16 @@ def prepare_sandbox_runtime(*, stderr: TextIO | None = None, home: Path | None =
             "Or pass --no-sandbox."
         )
     spec = plaibook_install_spec()
+    with _exclusive_runtime_lock(home):
+        return _prepare_sandbox_runtime_locked(base, spec, out, home)
+
+
+def _prepare_sandbox_runtime_locked(
+    base: str,
+    spec: str,
+    out: TextIO,
+    home: Path | None,
+) -> str:
     runtime, stamp_path = _runtime_paths(home)
     _refuse_symlink(runtime)
     _refuse_symlink(stamp_path)
@@ -434,6 +447,28 @@ def _resolved(path: str) -> str:
 def _runtime_paths(home: Path | None) -> tuple[Path, Path]:
     root = last_run_dir(home)
     return root / RUNTIME_DIRNAME, root / STAMP_NAME
+
+
+@contextmanager
+def _exclusive_runtime_lock(home: Path | None = None) -> Iterator[None]:
+    """Serialize sandbox-runtime create/replace across concurrent plai processes.
+
+    POSIX ``fcntl.flock`` only. Windows is not a supported plaibook host.
+    """
+    lock_path = last_run_dir(home) / LOCK_NAME
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as exc:
+        raise OpenshellSdkError(f"Cannot open sandbox-runtime lock {lock_path}: {exc}") from exc
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as exc:
+            raise OpenshellSdkError(f"Cannot lock sandbox runtime {lock_path}: {exc}") from exc
+        yield
+    finally:
+        os.close(fd)
 
 
 def _venv_python(runtime: Path) -> Path:

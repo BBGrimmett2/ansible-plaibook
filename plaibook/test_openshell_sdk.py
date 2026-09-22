@@ -12,6 +12,7 @@ import pytest
 
 from plaibook.openshell_sdk import (
     HASHED_REQUIREMENTS,
+    LOCK_NAME,
     RUNTIME_HASHED_REQUIREMENTS,
     SDK_SPEC,
     OpenshellSdkError,
@@ -378,6 +379,57 @@ def test_prepare_runtime_rebuilds_when_hashed_locks_change(monkeypatch, tmp_path
     assert "--no-build-isolation" in recorded[2]
     stamp = json.loads((cache / "sandbox-runtime.json").read_text())
     assert stamp["locks"] == "new-lock"
+
+
+def test_prepare_runtime_holds_flock_during_create(monkeypatch, tmp_path):
+    import subprocess
+    import sys
+
+    recorded_lock = []
+    base = tmp_path / "pythons" / "python3.11"
+    base.parent.mkdir()
+    base.write_text("")
+    real_run = subprocess.run
+
+    def fake_run(cmd, **kwargs):
+        if cmd[1:3] == ["-m", "venv"]:
+            lock_path = tmp_path / ".cache" / "ansible-plaibook" / LOCK_NAME
+            probe = real_run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import fcntl, os, sys\n"
+                        f"fd = os.open({str(lock_path)!r}, os.O_RDWR)\n"
+                        "try:\n"
+                        "    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+                        "except BlockingIOError:\n"
+                        "    sys.exit(2)\n"
+                        "else:\n"
+                        "    sys.exit(0)\n"
+                        "finally:\n"
+                        "    os.close(fd)\n"
+                    ),
+                ],
+                check=False,
+            )
+            recorded_lock.append(probe.returncode)
+            bindir = Path(cmd[-1]) / "bin"
+            bindir.mkdir(parents=True)
+            (bindir / "python").write_text("")
+            (bindir / "plai").write_text("")
+        if len(cmd) > 3 and cmd[2] == "pip" and cmd[3] == "wheel":
+            out = Path(cmd[cmd.index("-w") + 1])
+            (out / "plaibook-0.1.7-py3-none-any.whl").write_bytes(b"wheel")
+        return SimpleNamespace(returncode=0, stdout="3.11.11\n", stderr="")
+
+    monkeypatch.setattr("plaibook.openshell_sdk.find_sdk_python", lambda: str(base))
+    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda: "git+https://example/plaibook.git@abc")
+    monkeypatch.setattr("plaibook.openshell_sdk.interpreter_version", lambda _exe: (3, 11, 11))
+    monkeypatch.setattr("plaibook.openshell_sdk.subprocess.run", fake_run)
+    monkeypatch.setattr("plaibook.openshell_sdk.ensure_openshell_sdk", lambda python, **kwargs: None)
+    prepare_sandbox_runtime(stderr=None, home=tmp_path)
+    assert recorded_lock == [2]
 
 
 def test_prepare_runtime_refuses_symlink(monkeypatch, tmp_path):

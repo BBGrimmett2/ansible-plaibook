@@ -317,3 +317,35 @@
           false. forced={{ guardian_forced_needs_changes | default('undefined') }},
           verdict={{ review_verdict }}
         success_msg: "review_guardian_scan_blocking_enabled=false correctly surfaces without blocking."
+
+    - name: "Case 9: credentials-in-git-url SECRET-001 does not force the verdict"
+      block:
+        - name: Seed a credentials-in-git-url SECRET-001 finding as the live scanner would
+          ansible.builtin.set_fact:
+            review_verdict: "READY_FOR_HUMAN_REVIEW"
+            guardian_scan_available: true
+            guardian_findings:
+              - rule_id: "SECRET-001"
+                level: "error"
+                message: "Secret detected: Credentials In Git Url"
+                file_path: "ansible.fixture-ai-guardian-input.txt"
+                line_number: 375
+            guardian_blocking_findings: "{{ guardian_findings | blocking_guardian_findings(review_guardian_blocking_rule_ids) }}"
+
+        - name: Run guardian_scan_enforce_verdict.yml against the git-URL false positive
+          ansible.builtin.include_role:
+            name: review
+            tasks_from: guardian_scan_enforce_verdict.yml
+
+    - name: Assert credentials-in-git-url stayed informational
+      ansible.builtin.assert:
+        that:
+          - guardian_blocking_findings | length == 0
+          - not (guardian_forced_needs_changes | bool)
+          - review_verdict == 'READY_FOR_HUMAN_REVIEW'
+        fail_msg: >-
+          Expected SECRET-001 credentials-in-git-url to stay informational.
+          blocking={{ guardian_blocking_findings }},
+          forced={{ guardian_forced_needs_changes | default('undefined') }},
+          verdict={{ review_verdict }}
+        success_msg: "credentials-in-git-url SECRET-001 correctly stayed informational-only."
