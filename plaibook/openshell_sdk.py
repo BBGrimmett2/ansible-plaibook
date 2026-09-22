@@ -35,6 +35,7 @@ _MIN = (0, 0, 116)
 _MAX = (0, 0, 120)
 _RELEASE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:\+.*)?$")
 _BREW_BIN = (Path("/opt/homebrew/bin"), Path("/usr/local/bin"))
+_BREW_OPT = (Path("/opt/homebrew/opt"), Path("/usr/local/opt"))
 _SDK_MINORS = range(11, 15)
 
 
@@ -111,6 +112,10 @@ def find_sdk_python() -> str | None:
             candidates.append(found)
         for root in _BREW_BIN:
             brew = root / f"python3.{minor}"
+            if brew.is_file():
+                candidates.append(str(brew))
+        for opt in _BREW_OPT:
+            brew = opt / f"python@3.{minor}" / "bin" / f"python3.{minor}"
             if brew.is_file():
                 candidates.append(str(brew))
     found3 = shutil.which("python3")
@@ -263,7 +268,12 @@ def prepare_sandbox_runtime(*, stderr: TextIO | None = None, home: Path | None =
         return str(python)
     if runtime.exists() and not runtime.is_dir():
         raise OpenshellSdkError(f"{runtime} exists and is not a directory. Remove it so plaibook can own this runtime.")
-    out.write(f"OpenShell sandboxes need Python 3.11+. Preparing {runtime} from {base}…\n")
+    from plaibook import __version__
+
+    out.write(
+        f"plaibook {__version__}: OpenShell sandboxes need Python 3.11+. "
+        f"Preparing {runtime} from {base}…\n"
+    )
     out.flush()
     if runtime.exists():
         shutil.rmtree(runtime)

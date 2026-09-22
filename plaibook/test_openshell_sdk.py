@@ -156,6 +156,7 @@ def test_find_sdk_python_prefers_311(monkeypatch, tmp_path):
 
     monkeypatch.setattr("plaibook.openshell_sdk.shutil.which", which)
     monkeypatch.setattr("plaibook.openshell_sdk._BREW_BIN", ())
+    monkeypatch.setattr("plaibook.openshell_sdk._BREW_OPT", ())
     monkeypatch.setattr("plaibook.openshell_sdk.interpreter_supports_sdk", lambda _exe: True)
     assert find_sdk_python() == str(py311)
 
@@ -165,6 +166,18 @@ def test_find_sdk_python_uses_homebrew_when_path_misses(monkeypatch, tmp_path):
     brew.write_text("")
     monkeypatch.setattr("plaibook.openshell_sdk.shutil.which", lambda _name: None)
     monkeypatch.setattr("plaibook.openshell_sdk._BREW_BIN", (tmp_path,))
+    monkeypatch.setattr("plaibook.openshell_sdk._BREW_OPT", ())
+    monkeypatch.setattr("plaibook.openshell_sdk.interpreter_supports_sdk", lambda _exe: True)
+    assert find_sdk_python() == str(brew)
+
+
+def test_find_sdk_python_uses_homebrew_opt_when_bin_misses(monkeypatch, tmp_path):
+    brew = tmp_path / "python@3.11" / "bin" / "python3.11"
+    brew.parent.mkdir(parents=True)
+    brew.write_text("")
+    monkeypatch.setattr("plaibook.openshell_sdk.shutil.which", lambda _name: None)
+    monkeypatch.setattr("plaibook.openshell_sdk._BREW_BIN", ())
+    monkeypatch.setattr("plaibook.openshell_sdk._BREW_OPT", (tmp_path,))
     monkeypatch.setattr("plaibook.openshell_sdk.interpreter_supports_sdk", lambda _exe: True)
     assert find_sdk_python() == str(brew)
 
