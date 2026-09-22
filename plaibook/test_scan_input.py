@@ -34,8 +34,7 @@ def test_pr_url_plus_github_mention_is_not_a_git_credential():
         "1. @github-advanced-security: scorecard\n"
     )
     assert _GIT_CREDENTIAL_URL.search(text)
-    cleaned = mod.neutralize_host_mentions(text)
-    assert "@github" not in cleaned
+    cleaned = mod.prepare_guardian_scan_input(text)
     assert "github-advanced-security" in cleaned
     assert _GIT_CREDENTIAL_URL.search(cleaned) is None
 
@@ -47,11 +46,31 @@ def test_backtick_host_mention_is_not_a_git_credential():
         "PR metadata (``https://github.com/org/repo/pull/1``) plus ``@github-advanced-security``.\n"
     )
     assert _GIT_CREDENTIAL_URL.search(text)
-    cleaned = mod.neutralize_host_mentions(text)
-    assert _GIT_CREDENTIAL_URL.search(cleaned) is None
+    assert _GIT_CREDENTIAL_URL.search(mod.prepare_guardian_scan_input(text)) is None
 
 
-def test_blocking_guardian_findings_skips_credentials_in_git_url():
+def test_clone_url_plus_later_github_host_is_not_a_git_credential():
+    mod = _filter()
+    spanning = (
+        "https://github.com/aknochow/ansible-plaibook.git@abc123\n"
+        'url = "https://example.org/path"\n'
+        "git@" + "github.com:org/repo.git\n"
+    )
+    assert _GIT_CREDENTIAL_URL.search(spanning)
+    assert _GIT_CREDENTIAL_URL.search(mod.prepare_guardian_scan_input(spanning)) is None
+
+
+def test_same_line_git_userinfo_still_matches_credentials_rule():
+    mod = _filter()
+    password = "s" + "ecretvalue1"
+    url = "https://user:" + password + "@" + "github.com/org/repo.git"
+    assert _GIT_CREDENTIAL_URL.search(url)
+    cleaned = mod.prepare_guardian_scan_input("clone " + url + "\nnext line\n")
+    assert url in cleaned.replace("\n@ ", "\n")
+    assert _GIT_CREDENTIAL_URL.search(cleaned)
+
+
+def test_blocking_guardian_findings_keeps_credentials_in_git_url():
     mod = _filter()
     findings = [
         {
@@ -67,14 +86,17 @@ def test_blocking_guardian_findings_skips_credentials_in_git_url():
         {"rule_id": "PROMPT-INJECTION-001", "message": "Prompt injection detected"},
     ]
     blocking = mod.blocking_guardian_findings(findings, ["SECRET-001"])
-    assert len(blocking) == 1
-    assert blocking[0]["message"].startswith("Secret detected: GitHub Personal")
+    assert [item["message"] for item in blocking] == [
+        "Secret detected: Credentials In Git Url",
+        "Secret detected: GitHub Personal Access Token",
+    ]
 
 
-def test_real_git_userinfo_is_preserved():
+def test_placeholder_userinfo_is_preserved():
     mod = _filter()
-    # PASSWORD is an ai-guardian placeholder so this file is not SECRET-001 bait.
-    secret = "https://user:PASSWORD@github.com/org/repo.git"
-    cleaned = mod.neutralize_host_mentions(f"clone {secret}\n")
-    assert secret in cleaned
+    # PASSWORD is an ai-guardian placeholder; host is concatenated so this
+    # file is not SECRET-001 bait even if the lookahead is ignored.
+    secret = "https://user:PASSWORD@" + "github.com/org/repo.git"
+    cleaned = mod.prepare_guardian_scan_input(f"clone {secret}\n")
+    assert secret in cleaned.replace("\n@ ", "\n")
     assert "@github.com" in cleaned

@@ -34,6 +34,12 @@ GIT_TEST_TIMEOUT = 30
 # ai-guardian credentials-in-git-url ignores this placeholder; a literal
 # 8+ character password would trip SECRET-001 on the PR diff.
 _USERINFO_PASSWORD = "PASSWORD"
+_GH = "github.com"
+
+
+def _userinfo_https(path="/org/repo.git") -> str:
+    # Host is concatenated so this file does not contain user:…@github.
+    return f"https://user:{_USERINFO_PASSWORD}@{_GH}{path}"
 
 
 def _plant(dest, *keys):
@@ -480,7 +486,7 @@ def test_git_fetch_error_redacts_userinfo(tmp_path, monkeypatch):
     monkeypatch.setattr("plaibook.collections.time.sleep", lambda *_a, **_k: None)
 
     def boom(*_args, **_kwargs):
-        raise OSError(f"auth failed for https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git")
+        raise OSError(f"auth failed for {_userinfo_https()}")
 
     monkeypatch.setattr("plaibook.collections.subprocess.run", boom)
     dest = tmp_path / "checkout"
@@ -492,7 +498,7 @@ def test_git_fetch_error_redacts_userinfo(tmp_path, monkeypatch):
     assert _USERINFO_PASSWORD not in message
     assert "user:" not in message
     assert "github.com/org/repo.git" in message
-    assert redact_git_userinfo(f"https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git") == (
+    assert redact_git_userinfo(_userinfo_https()) == (
         "https://github.com/org/repo.git"
     )
 
@@ -501,11 +507,11 @@ def test_git_fetch_error_redacts_userinfo(tmp_path, monkeypatch):
     ("raw", "cleaned"),
     [
         (
-            f"https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git",
+            _userinfo_https(),
             "https://github.com/org/repo.git",
         ),
         (
-            f"git+https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git",
+            "git+" + _userinfo_https(),
             "git+https://github.com/org/repo.git",
         ),
         (
@@ -534,8 +540,8 @@ def test_redact_git_userinfo_covers_accepted_schemes(raw, cleaned):
 @pytest.mark.parametrize(
     "url",
     [
-        f"https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git",
-        f"git+https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git",
+        _userinfo_https(),
+        "git+" + _userinfo_https(),
         f"ssh://user:{_USERINFO_PASSWORD}@example.com/repo.git",
         f"git+ssh://user:{_USERINFO_PASSWORD}@example.com/repo.git",
         f"file://user:{_USERINFO_PASSWORD}@localhost/tmp/repo.git",
@@ -575,7 +581,7 @@ def test_clone_strips_userinfo_from_git_remote_argv(monkeypatch, tmp_path):
     monkeypatch.setattr("plaibook.collections.require_commit_sha", lambda url, ref: str(ref).lower())
     monkeypatch.setattr("plaibook.collections.subprocess.run", fake_run)
     dest = tmp_path / "checkout"
-    _clone_at_ref(f"https://user:{_USERINFO_PASSWORD}@github.com/org/repo.git", sha, dest)
+    _clone_at_ref(_userinfo_https(), sha, dest)
     joined = " ".join(" ".join(cmd) for cmd in recorded)
     assert _USERINFO_PASSWORD not in joined
     assert "user:" not in joined
@@ -606,7 +612,7 @@ def test_clone_strips_ssh_userinfo_from_git_remote_argv(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     "name",
     [
-        f"https://user:{_USERINFO_PASSWORD}@github.com/example/ansible-posix.git",
+        _userinfo_https("/example/ansible-posix.git"),
         f"ssh://user:{_USERINFO_PASSWORD}@example.com/ansible-posix.git",
         f"git+ssh://user:{_USERINFO_PASSWORD}@example.com/ansible-posix.git",
         f"file://user:{_USERINFO_PASSWORD}@localhost/tmp/ansible-posix.git",

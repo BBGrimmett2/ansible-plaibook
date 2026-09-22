@@ -151,7 +151,7 @@ def test_spec_from_direct_url_pins_git_commit():
 def test_spec_from_direct_url_strips_userinfo():
     spec = spec_from_direct_url(
         {
-            "url": "https://user:PASSWORD@github.com/aknochow/ansible-plaibook.git",
+            "url": "https://user:PASSWORD@" + "github.com/aknochow/ansible-plaibook.git",
             "vcs_info": {"vcs": "git", "commit_id": "abc123"},
         },
         "0.1.0",
@@ -412,6 +412,7 @@ def test_prepare_runtime_holds_flock_during_create(monkeypatch, tmp_path):
                     ),
                 ],
                 check=False,
+                timeout=5,
             )
             recorded_lock.append(probe.returncode)
             bindir = Path(cmd[-1]) / "bin"

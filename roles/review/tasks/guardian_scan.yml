@@ -64,15 +64,21 @@
           {{ review_full_diff
              ~ ((_guardian_real_nl ~ _guardian_real_nl ~ '--- PR/MR description ---' ~ _guardian_real_nl ~ review_context) if review_context else '') }}
 
-    # credentials-in-git-url matches across newlines: any https:// URL, the
-    # next colon, then a later @github / @gitlab / @bitbucket mention.
-    # PR metadata (https://github.com/.../pull/N) plus an @github-advanced-security
-    # review comment is that shape and is not a credential. Real userinfo
-    # (https://user:PASSWORD@github.com) is kept — its @ is not preceded by
-    # whitespace. Same helper as filter_plugins/scan_input.py.
+    # credentials-in-git-url matches across newlines: any https URL, the
+    # next colon, then a later at-github / at-gitlab / at-bitbucket mention.
+    # A github.com PR URL plus a github-advanced-security review comment
+    # is that shape and is not a credential. Real same-line userinfo
+    # (password between colon and at-github.com) stays — prepare does not
+    # strip that. Line-prefixing then stops [^@]{8,} from spanning a clone
+    # URL on one line to an at-github host on another. Same helpers as
+    # filter_plugins/scan_input.py.
     - name: Keep @host mentions from spanning into a git-credential match
       ansible.builtin.set_fact:
         _guardian_scan_input: "{{ _guardian_scan_input | neutralize_host_mentions }}"
+
+    - name: Stop credentials-in-git-url from matching across newlines
+      ansible.builtin.set_fact:
+        _guardian_scan_input: "{{ _guardian_scan_input | interrupt_multiline_git_credentials }}"
 
     - name: Truncate the scan input if it exceeds the configured safety bound
       ansible.builtin.set_fact:
