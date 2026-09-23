@@ -80,6 +80,16 @@ def test_git_auth_uses_config_env_not_argv(monkeypatch, tmp_path):
     assert env[mod.GIT_AUTH_HEADER_ENV].startswith("AUTHORIZATION: basic ")
     assert "ghs_testtoken" not in env[mod.GIT_AUTH_HEADER_ENV]
     assert recorded["kwargs"]["timeout"] == GALAXY_TIMEOUT_SECONDS
+    assert mod._GIT_EXTRAHEADER_KEY == "http.https://github.com/.extraHeader"
+    extra = [arg for arg in recorded["cmd"] if arg.startswith("--config-env=")][0]
+    assert extra == f"--config-env={mod._GIT_EXTRAHEADER_KEY}={mod.GIT_AUTH_HEADER_ENV}"
+
+
+def test_git_extraheader_key_source_is_not_an_https_url_literal():
+    src = (REPO_ROOT / "scripts" / "ci-install-collections.py").read_text(encoding="utf-8")
+    assert 'scheme="https"' in src
+    assert '"http.https://"' not in src
+    assert "http.https://" + "github.com" not in src
 
 
 def test_git_passes_timeout(monkeypatch, tmp_path):

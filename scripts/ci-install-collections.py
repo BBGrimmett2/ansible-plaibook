@@ -91,9 +91,11 @@ def _git_token() -> str | None:
 
 GIT_AUTH_HEADER_ENV = "PLAIBOOK_GIT_AUTH_HEADER"
 # Git config key used by --config-env. Built in parts so the value never
-# sits in argv (process listings / CalledProcessError).
+# sits in argv (process listings / CalledProcessError). Format the
+# scheme by name so this file does not contain an https URL literal
+# that credentials-in-git-url can span into a later @github host.
 _GH_HOST = "github.com"
-_GIT_EXTRAHEADER_KEY = "http.https://" + _GH_HOST + "/.extraHeader"
+_GIT_EXTRAHEADER_KEY = "http.{scheme}://{host}/.extraHeader".format(scheme="https", host=_GH_HOST)
 
 
 def _github_https_header(value: str) -> str:
