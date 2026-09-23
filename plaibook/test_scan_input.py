@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import importlib.util
 import re
-import subprocess
 from pathlib import Path
 
 # ai-guardian 1.15.0 secrets.toml rule id credentials-in-git-url.
@@ -184,19 +183,35 @@ _GENERIC_PASSWORD_ASSIGNMENT = re.compile(
 )
 _ENV_VARIABLE_ASSIGNMENT = re.compile(r"""([A-Z][A-Z0-9_]+)\s*=\s*(["']?)([A-Za-z0-9\-_+/=]{16,})\2""")
 _ALL_CAPS_VALUE = re.compile(r"^[A-Z0-9]+(?:_[A-Z0-9]+)+$")
+_SECRET_SCAN_FILES = (
+    "plaibook/cursor_http2_proxy.py",
+    "plaibook/openshell_sdk.py",
+    "plaibook/test_collections.py",
+    "plaibook/test_cursor_http2_proxy.py",
+    "plaibook/test_openshell_sdk.py",
+    "plaibook/test_scan_input.py",
+    "scripts/ci-install-collections.py",
+    "scripts/test_ci_install_collections.py",
+)
 
 
 def test_python_sources_do_not_trip_generic_secret_assignment_rules():
-    """ai-guardian maps these matches to SECRET-001; keep this PR's diff clean."""
-    mod = _filter()
-    diff = subprocess.check_output(["git", "diff", "origin/main"], text=True)
-    text = mod.neutralize_host_mentions(diff)
-    password_hits = [match.group(0)[:80] for match in _GENERIC_PASSWORD_ASSIGNMENT.finditer(text)]
+    """ai-guardian maps these matches to SECRET-001; keep fixtures from matching.
+
+    Scan the files themselves rather than ``git diff origin/main``: CI checkouts
+    are shallow and often have no main ref, which skipped every Test job.
+    """
+    root = Path(__file__).resolve().parents[1]
+    password_hits = []
     env_hits = []
-    for match in _ENV_VARIABLE_ASSIGNMENT.finditer(text):
-        value = match.group(3)
-        if value.startswith("_") or _ALL_CAPS_VALUE.match(value):
-            continue
-        env_hits.append(match.group(0)[:80])
+    for rel in _SECRET_SCAN_FILES:
+        text = (root / rel).read_text(encoding="utf-8")
+        for match in _GENERIC_PASSWORD_ASSIGNMENT.finditer(text):
+            password_hits.append(f"{rel}: {match.group(0)[:80]}")
+        for match in _ENV_VARIABLE_ASSIGNMENT.finditer(text):
+            value = match.group(3)
+            if value.startswith("_") or _ALL_CAPS_VALUE.match(value):
+                continue
+            env_hits.append(f"{rel}: {match.group(0)[:80]}")
     assert password_hits == []
     assert env_hits == []
