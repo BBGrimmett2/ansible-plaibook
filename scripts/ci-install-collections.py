@@ -23,6 +23,7 @@ from plaibook.collections import (
     CollectionInstallError,
     _load_requirement_rows,
     _runtime_required_keys,
+    _validate_requirement_row,
     collection_is_installed,
     redact_git_userinfo,
     require_commit_sha,
@@ -165,7 +166,7 @@ def _install_from_dir(galaxy: str, source: Path, dest: Path) -> None:
 
 
 def install_git_sources(galaxy: str, dest: Path, cols: list[dict], token: str | None) -> None:
-    for col in cols:
+    for index, col in enumerate(cols):
         name = col.get("name")
         if not isinstance(name, str) or not name.strip():
             raise SystemExit("collection requirement is missing a non-empty string name")
@@ -173,6 +174,10 @@ def install_git_sources(galaxy: str, dest: Path, cols: list[dict], token: str | 
         is_git = col.get("type") == "git" or name.startswith(("https://", "http://", "git+", "git@", "file://"))
         if not is_git:
             continue
+        try:
+            _validate_requirement_row(REQUIREMENTS, index, col)
+        except CollectionInstallError as exc:
+            raise SystemExit(str(exc)) from exc
         url = name.removeprefix("git+")
         ref = require_commit_sha(url, col.get("version"))
         print(f"GitHub: {url}@{ref}", flush=True)

@@ -77,7 +77,7 @@ def require_commit_sha(url: str, ref: object) -> str:
         )
     if isinstance(ref, str) and COMMIT_SHA_RE.fullmatch(ref.lower()):
         return ref.lower()
-    raise CollectionInstallError(f"git collection {shown} must pin a 40-character commit SHA, not {ref!r}")
+    raise CollectionInstallError(f"git collection {shown} must pin a 40-character commit SHA")
 
 
 # Password-bearing userinfo for every accepted scheme, including git+ssh://

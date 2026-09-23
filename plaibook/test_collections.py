@@ -400,6 +400,14 @@ def test_require_commit_sha_rejects_branches_tags_and_head():
             require_commit_sha(url, ref)
 
 
+def test_require_commit_sha_does_not_echo_invalid_ref():
+    url = "https://github.com/example/ansible-posix.git"
+    secret = "not-a-sha-ref-value-must-not-leak"
+    with pytest.raises(CollectionInstallError, match="40-character commit SHA") as excinfo:
+        require_commit_sha(url, secret)
+    assert secret not in str(excinfo.value)
+
+
 def test_ensure_collections_rejects_mutable_git_ref(tmp_path):
     playbook = tmp_path / "playbook"
     playbook.mkdir()

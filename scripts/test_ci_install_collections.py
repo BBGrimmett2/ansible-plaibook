@@ -7,6 +7,8 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from plaibook.collections import GALAXY_TIMEOUT_SECONDS, requirement_collection_keys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -67,10 +69,10 @@ def test_git_auth_uses_config_env_not_argv(monkeypatch, tmp_path):
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(mod.subprocess, "run", fake_run)
-    mod._git(["status"], cwd=tmp_path, token="ghs_testtoken")
+    mod._git(["status"], cwd=tmp_path, token="ci-test-token")
     joined = " ".join(recorded["cmd"])
-    assert "ghs_testtoken" not in joined
-    assert "ghs_testtoken@" not in joined
+    assert "ci-test-token" not in joined
+    assert "ci-test-token@" not in joined
     assert "insteadOf" not in joined
     assert "bearer" not in joined.lower()
     assert any(arg.startswith("--config-env=") and "extraHeader" in arg for arg in recorded["cmd"])
@@ -78,7 +80,7 @@ def test_git_auth_uses_config_env_not_argv(monkeypatch, tmp_path):
     assert not any(arg.startswith("-c") and "extraHeader" in arg for arg in recorded["cmd"])
     env = recorded["kwargs"]["env"]
     assert env[mod.GIT_AUTH_HEADER_ENV].startswith("AUTHORIZATION: basic ")
-    assert "ghs_testtoken" not in env[mod.GIT_AUTH_HEADER_ENV]
+    assert "ci-test-token" not in env[mod.GIT_AUTH_HEADER_ENV]
     assert recorded["kwargs"]["timeout"] == GALAXY_TIMEOUT_SECONDS
     assert mod._GIT_EXTRAHEADER_KEY == "http.https://github.com/.extraHeader"
     extra = [arg for arg in recorded["cmd"] if arg.startswith("--config-env=")][0]
@@ -117,3 +119,16 @@ def test_required_keys_include_mirror_dependency():
 def test_ci_installer_has_no_galaxy_requirements_path():
     mod = _load_ci_install()
     assert not hasattr(mod, "try_requirements_file")
+
+
+def test_install_git_sources_rejects_fqcn_typed_as_git(tmp_path):
+    mod = _load_ci_install()
+    cols = [
+        {
+            "name": "ansible.posix",
+            "type": "git",
+            "version": "e98d9a0756458be1ac710988498000973889075c",
+        }
+    ]
+    with pytest.raises(SystemExit, match="git source must be"):
+        mod.install_git_sources("ansible-galaxy", tmp_path, cols, token=None)
