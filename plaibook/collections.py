@@ -237,7 +237,7 @@ def _load_requirement_rows(requirements: Path) -> list[dict]:
             f"{requirements} must be a mapping with a collections list, not {type(data).__name__}"
         )
     if "collections" not in data:
-        return []
+        raise CollectionInstallError(f"{requirements} must contain a collections list")
     cols = data["collections"]
     if cols is None:
         return []

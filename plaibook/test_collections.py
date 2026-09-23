@@ -367,6 +367,17 @@ def test_ensure_collections_rejects_non_list_collections(tmp_path):
     assert not (dest / ".requirements.sha256").is_file()
 
 
+def test_ensure_collections_rejects_mapping_without_collections_key(tmp_path):
+    playbook = tmp_path / "playbook"
+    playbook.mkdir()
+    (playbook / "collections-requirements.yml").write_text("foo: bar\n")
+    home = tmp_path / "home"
+    with pytest.raises(CollectionInstallError, match="must contain a collections list"):
+        ensure_collections(playbook, home=home, galaxy_bin="ansible-galaxy")
+    dest = collections_dir(home)
+    assert not (dest / ".requirements.sha256").is_file()
+
+
 def test_ensure_collections_rejects_non_mapping_collection_row(tmp_path):
     playbook = tmp_path / "playbook"
     playbook.mkdir()
