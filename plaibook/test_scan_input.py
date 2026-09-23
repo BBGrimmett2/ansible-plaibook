@@ -108,6 +108,17 @@ def test_split_line_git_userinfo_still_matches_credentials_rule():
     assert _GIT_CREDENTIAL_URL.search(cleaned)
 
 
+def test_quote_adjacent_git_host_still_matches_credentials_rule():
+    """A quote immediately before the git host is not a mention prefix."""
+    mod = _filter()
+    password = "s" + "ecretvalue1"
+    text = '"https://user:' + password + '" "@' + "github.com/org/repo.git\"\n"
+    assert _GIT_CREDENTIAL_URL.search(text)
+    cleaned = mod.prepare_guardian_scan_input(text)
+    assert "@" + "github.com" in cleaned
+    assert _GIT_CREDENTIAL_URL.search(cleaned)
+
+
 def test_added_split_git_userinfo_in_diff_still_matches():
     mod = _filter()
     password = "s" + "ecretvalue1"
@@ -116,10 +127,23 @@ def test_added_split_git_userinfo_in_diff_still_matches():
         "--- a/x.py\n"
         "+++ b/x.py\n"
         '+url = ("https://user:"\n'
-        f'+       "{password}@' + 'github.com/org/repo.git")\n'
+        f'+       "{password}@' + "github.com/org/repo.git\")\n"
     )
     assert _GIT_CREDENTIAL_URL.search(text)
     assert _GIT_CREDENTIAL_URL.search(mod.prepare_guardian_scan_input(text))
+
+
+def test_quote_prefixed_github_user_mention_is_not_a_git_credential():
+    mod = _filter()
+    text = (
+        "- **URL**: https://github.com/aknochow/ansible-plaibook/pull/64\n"
+        "- **CI**: passing\n"
+        'note: "@github-advanced-security" left a comment\n'
+    )
+    assert _GIT_CREDENTIAL_URL.search(text)
+    cleaned = mod.prepare_guardian_scan_input(text)
+    assert "github-advanced-security" in cleaned
+    assert _GIT_CREDENTIAL_URL.search(cleaned) is None
 
 
 def test_blocking_guardian_findings_keeps_credentials_in_git_url():

@@ -66,8 +66,9 @@
     # `--` and therefore looks like `---` in the patch). Concatenate
     # the PR/MR description, then strip whitespace/quote-prefixed
     # @host mentions so a github.com PR URL plus a review @mention is
-    # not treated as credentials. Same-line and split-across-lines
-    # userinfo still match.
+    # not treated as credentials. Do not strip @github.com (and the
+    # other git hosts): a quote-split userinfo URL still has to match.
+    # Same-line and split-across-lines userinfo still match.
     - name: Build the shared scan input from the diff and PR/MR description
       ansible.builtin.set_fact:
         _guardian_scan_input: >-

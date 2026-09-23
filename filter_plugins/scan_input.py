@@ -13,8 +13,11 @@ Do not drop unified-diff deletion lines: a credential added then
 deleted in the same PR stays in git history and must still force
 SECRET-001, including a deleted source line that starts with ``--``
 (that becomes ``---`` in the patch and is not a ``--- a/file`` header).
-Strip whitespace/quote-prefixed @host mentions only. Same-line userinfo
-and split-across-lines userinfo both still match.
+Strip whitespace/quote-prefixed @user mentions (github-advanced-security)
+only. Do not strip an @ that begins a git hostname (github.com and the
+other hosts in the credentials-in-git-url rule), even when a quote
+precedes it: adjacent string literals are a real credential.
+Same-line userinfo and split-across-lines userinfo both still match.
 """
 
 from __future__ import annotations
@@ -23,8 +26,11 @@ import re
 from typing import Any
 
 # Newline is not a mention prefix: "password\\n@github.com" is a split
-# credential, not a review comment.
-_HOST_MENTION_RE = re.compile(r"(^|[ \t`\"'(\[])@(github|gitlab|bitbucket|dev\.azure)\b")
+# credential, not a review comment. @github.com is a git host even when
+# a quote precedes it (adjacent string literals); @github-user is not.
+_HOST_MENTION_RE = re.compile(
+    r"(^|[ \t`\"'(\[])@(github|gitlab|bitbucket|dev\.azure)\b(?!\.(?:com|org)\b)"
+)
 
 
 def neutralize_host_mentions(text: str) -> str:
