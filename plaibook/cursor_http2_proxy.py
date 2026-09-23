@@ -187,9 +187,14 @@ def _replace_connect_function(text: str) -> str:
     end = _matching_brace_end(text, text.find("{", start))
     original = text[start:end]
     if "node_error_js_1" in original:
-        on_error = "reject === null || reject === void 0 ? void 0 : reject((0, node_error_js_1.connectErrorFromNodeReason)(err));"
+        on_error = (
+            "reject === null || reject === void 0 ? void 0 : "
+            "reject((0, node_error_js_1.connectErrorFromNodeReason)(err));"
+        )
     else:
-        on_error = "reject === null || reject === void 0 ? void 0 : reject(connectErrorFromNodeReason(err));"
+        on_error = (
+            "reject === null || reject === void 0 ? void 0 : reject(connectErrorFromNodeReason(err));"
+        )
     replacement = _CONNECT_FN.replace("/*ON_ERROR*/", on_error)
     helpers = _HELPERS.strip() + "\n"
     return text[:start] + helpers + replacement + text[end:]
