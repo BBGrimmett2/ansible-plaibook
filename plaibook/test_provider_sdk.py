@@ -32,6 +32,17 @@ def test_skips_pip_when_pin_is_present(monkeypatch):
     assert calls == []
 
 
+def test_cursor_pin_present_still_applies_http2_proxy_patch(monkeypatch):
+    patched = []
+    monkeypatch.setattr("plaibook.provider_sdk._requirement_satisfied", lambda *_a: True)
+    monkeypatch.setattr(
+        "plaibook.cursor_http2_proxy.patch_installed_cursor_sdk",
+        lambda python: patched.append(python),
+    )
+    ensure_provider_sdk("cursor")
+    assert patched
+
+
 def test_installs_missing_openai_from_hashed_file(monkeypatch):
     recorded = []
     present = {"n": 0}

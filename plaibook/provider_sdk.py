@@ -66,6 +66,7 @@ def ensure_provider_sdk(
         if not _requirement_satisfied(exe, mod, dist, expected):
             missing.append((mod, dist, expected))
     if not missing:
+        _patch_cursor_http2_proxy(key, exe)
         return
     out = stderr if stderr is not None else sys.stderr
     label = ", ".join(f"{dist}=={ver}" for _mod, dist, ver in missing)
@@ -90,6 +91,18 @@ def ensure_provider_sdk(
         raise ProviderSdkError(
             f"pip install finished but {exe} still cannot import {', '.join(still)} at the hashed pin."
         )
+    _patch_cursor_http2_proxy(key, exe)
+
+
+def _patch_cursor_http2_proxy(family: str, python: str) -> None:
+    if family != "cursor":
+        return
+    from plaibook.cursor_http2_proxy import CursorHttp2ProxyError, patch_installed_cursor_sdk
+
+    try:
+        patch_installed_cursor_sdk(python)
+    except CursorHttp2ProxyError as exc:
+        raise ProviderSdkError(str(exc)) from exc
 
 
 def _normalize_dist(name: str) -> str:
