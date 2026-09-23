@@ -122,13 +122,16 @@ and `review.yml`'s `review_delegate_host` computation.
 ### Gotcha: `ansible_python_interpreter: auto_silent`
 
 Without it, `delegate_to: sandbox_target` tasks silently inherit the
-*controller's* `ansible_python_interpreter` override (play `set_fact`,
-`host_vars/localhost.yml`, or extra-vars) instead of discovering the
-sandbox's own interpreter, a well-known Ansible gotcha where
-`ansible_python_interpreter` doesn't automatically re-resolve per
-delegated host. `auto_silent` forces real discovery inside the sandbox.
-`plai` does not pass `ansible_python_interpreter` as extra-vars: extra-vars
-win over `add_host`, and a controller venv path does not exist in the guest.
+*controller's* `ansible_python_interpreter` override (`host_vars/localhost.yml`,
+play `set_fact`, or extra-vars) instead of discovering the sandbox's own
+interpreter, a well-known Ansible gotcha where `ansible_python_interpreter`
+doesn't automatically re-resolve per delegated host. `auto_silent` on
+`add_host` plus a matching host fact on `sandbox_target` forces real
+discovery inside the sandbox. Localhost still `set_fact`s
+`ansible_python_interpreter: "{{ ansible_playbook_python }}"` so sandboxed
+controller modules use the re-exec'd interpreter. `plai` does not pass
+`ansible_python_interpreter` as extra-vars: extra-vars win over `add_host`,
+and a controller venv path does not exist in the guest.
 
 ## OpenShell network policy vs provider APIs
 

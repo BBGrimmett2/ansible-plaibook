@@ -73,3 +73,14 @@
       --sandbox {{ sandbox.sandbox.name | quote }} --workspace {{ sandbox.sandbox.workspace | quote }}"
       -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
       -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR
+
+# add_host auto_silent is an inventory host var. localhost's set_fact of
+# ansible_python_interpreter is the same precedence as a fact, which
+# would otherwise leak into delegate_to: sandbox_target. Pin auto_silent
+# as a host fact on the guest so discovery stays on the sandbox. set_fact
+# is an action plugin (no SSH); delegate_facts writes it onto sandbox_target.
+- name: Keep sandbox interpreter discovery on the guest
+  ansible.builtin.set_fact:
+    ansible_python_interpreter: auto_silent
+  delegate_to: sandbox_target
+  delegate_facts: true

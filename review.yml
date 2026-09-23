@@ -208,13 +208,14 @@
         review_started_epoch: "{{ lookup('pipe', 'date +%s') | int }}"
 
     # connection: local can otherwise auto-discover a different system
-    # Python than ansible-playbook. Set the magic var only when this
-    # play stays on localhost: extra-vars/set_fact win over add_host
-    # auto_silent, and a controller venv path does not exist in the guest.
-    # Sandboxed runs rely on ansible_playbook_python for localhost
-    # (ansible-core 2.16+ connection: local) and auto_silent on sandbox_target.
+    # Python than ansible-playbook (host_vars/localhost.yml, inventory).
+    # set_fact is localhost-only (this play's host) and applies for both
+    # sandboxed and unsandboxed runs so provider modules use the re-exec'd
+    # interpreter. Do not pass ansible_python_interpreter as extra-vars:
+    # extra-vars are global, win over add_host, and a controller venv path
+    # does not exist in the guest. sandbox_target keeps auto_silent on
+    # add_host and as its own host fact (same precedence as this set_fact).
     - name: Align local module execution with the playbook interpreter
-      when: not (use_sandbox | bool)
       ansible.builtin.set_fact:
         ansible_python_interpreter: "{{ ansible_playbook_python }}"
 

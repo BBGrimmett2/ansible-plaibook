@@ -175,7 +175,7 @@
           'skip_reason': guardian_scan_skip_reason | default(''),
           'findings_count': guardian_findings | default([]) | length,
           'blocking_findings_count': guardian_blocking_findings | default([]) | length,
-          'blocking_rule_ids': guardian_blocking_findings | default([]) | map(attribute='rule_id') | unique | list,
+          'blocking_rule_ids': guardian_blocking_findings | default([]) | map(attribute='rule_id') | list | unique | list,
           'forced_needs_changes': guardian_forced_needs_changes | default(false) | bool
         }
       } | to_nice_json }}

@@ -30,6 +30,9 @@ def test_repo_requirements_keys_are_named_not_a_raw_count():
     assert ("community", "general") in keys
     assert ("kubernetes", "core") in keys
     assert ("ansible", "posix") in keys
+    # YAML rows only — the community.general GitHub-mirror dep is added by
+    # _required_keys() / _runtime_required_keys(), not the requirements file.
+    assert ("community", "library_inventory_filtering_v1") not in keys
     assert len(keys) == 8
 
 
@@ -97,6 +100,8 @@ def test_required_keys_include_mirror_dependency():
     keys = mod._required_keys()
     assert ("community", "library_inventory_filtering_v1") in keys
     assert ("ansible", "posix") in keys
+    assert ("community", "general") in keys
+    assert len(keys) == 9
 
 
 def test_ci_installer_has_no_galaxy_requirements_path():
