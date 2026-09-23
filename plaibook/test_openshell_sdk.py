@@ -19,6 +19,7 @@ from plaibook.openshell_sdk import (
     _source_fingerprint,
     ensure_openshell_sdk,
     find_sdk_python,
+    plaibook_install_spec,
     prepare_sandbox_runtime,
     reexec_sandbox_runtime,
     sdk_satisfies,
@@ -193,6 +194,47 @@ def test_spec_from_direct_url_file_not_pypi():
         spec_from_direct_url({"url": "https://files.pythonhosted.org/plaibook.whl"}, "0.1.0")
 
 
+def test_plaibook_install_spec_materializes_index_install(tmp_path, monkeypatch):
+    class FakeDist:
+        version = "9.9.9"
+
+        def read_text(self, name):
+            return None
+
+    monkeypatch.setattr("importlib.metadata.distribution", lambda _name: FakeDist())
+    monkeypatch.setattr("plaibook.openshell_sdk._checkout_source_path", lambda: None)
+    spec = plaibook_install_spec(home=tmp_path)
+    root = Path(spec)
+    assert root == tmp_path / ".cache" / "ansible-plaibook" / "pypi-src"
+    text = (root / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'name = "plaibook"' in text
+    assert (root / "plaibook" / "openshell_sdk.py").is_file()
+    assert "plaibook==" not in spec
+    assert "pypi.org" not in spec
+
+
+def test_plaibook_install_spec_materializes_pypi_direct_url(tmp_path, monkeypatch):
+    class FakeDist:
+        version = "9.9.9"
+
+        def read_text(self, name):
+            if name == "direct_url.json":
+                return json.dumps(
+                    {
+                        "url": "https://files.pythonhosted.org/packages/plaibook.whl",
+                        "archive_info": {"hash": "sha256:abc"},
+                    }
+                )
+            return None
+
+    monkeypatch.setattr("importlib.metadata.distribution", lambda _name: FakeDist())
+    monkeypatch.setattr("plaibook.openshell_sdk._checkout_source_path", lambda: None)
+    spec = plaibook_install_spec(home=tmp_path)
+    assert Path(spec).joinpath("pyproject.toml").is_file()
+    assert "files.pythonhosted.org" not in spec
+    assert "plaibook==" not in spec
+
+
 def test_spec_from_direct_url_rejects_http_git():
     with pytest.raises(OpenshellSdkError, match="HTTP"):
         spec_from_direct_url(
@@ -265,7 +307,7 @@ def test_prepare_runtime_creates_venv_and_installs(monkeypatch, tmp_path):
 
     ensured = []
     monkeypatch.setattr("plaibook.openshell_sdk.find_sdk_python", lambda: str(base))
-    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda: "git+https://example/plaibook.git@abc")
+    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda **_k: "git+https://example/plaibook.git@abc")
     monkeypatch.setattr("plaibook.openshell_sdk.interpreter_version", lambda _exe: (3, 11, 11))
     monkeypatch.setattr("plaibook.openshell_sdk.subprocess.run", fake_run)
     monkeypatch.setattr(
@@ -324,7 +366,7 @@ def test_prepare_runtime_reuses_matching_stamp(monkeypatch, tmp_path):
     )
     calls = []
     monkeypatch.setattr("plaibook.openshell_sdk.find_sdk_python", lambda: str(base))
-    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda: spec)
+    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda **_k: spec)
     monkeypatch.setattr("plaibook.openshell_sdk.interpreter_version", lambda _exe: (3, 11, 11))
     monkeypatch.setattr("plaibook.openshell_sdk._runtime_lock_id", lambda: "lock-id")
     monkeypatch.setattr("plaibook.openshell_sdk.subprocess.run", lambda *a, **k: calls.append(a))
@@ -376,7 +418,7 @@ def test_prepare_runtime_rebuilds_when_local_source_changes(monkeypatch, tmp_pat
 
     (checkout / "mod.py").write_text("n = 2\n")
     monkeypatch.setattr("plaibook.openshell_sdk.find_sdk_python", lambda: str(base))
-    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda: spec)
+    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda **_k: spec)
     monkeypatch.setattr("plaibook.openshell_sdk.interpreter_version", lambda _exe: (3, 11, 11))
     monkeypatch.setattr("plaibook.openshell_sdk._runtime_lock_id", lambda: "lock-id")
     monkeypatch.setattr("plaibook.openshell_sdk.subprocess.run", fake_run)
@@ -424,7 +466,7 @@ def test_prepare_runtime_rebuilds_when_hashed_locks_change(monkeypatch, tmp_path
         return SimpleNamespace(returncode=0, stdout="3.11.11\n", stderr="")
 
     monkeypatch.setattr("plaibook.openshell_sdk.find_sdk_python", lambda: str(base))
-    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda: spec)
+    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda **_k: spec)
     monkeypatch.setattr("plaibook.openshell_sdk.interpreter_version", lambda _exe: (3, 11, 11))
     monkeypatch.setattr("plaibook.openshell_sdk._runtime_lock_id", lambda: "new-lock")
     monkeypatch.setattr("plaibook.openshell_sdk.subprocess.run", fake_run)
@@ -481,7 +523,7 @@ def test_prepare_runtime_holds_flock_during_create(monkeypatch, tmp_path):
         return SimpleNamespace(returncode=0, stdout="3.11.11\n", stderr="")
 
     monkeypatch.setattr("plaibook.openshell_sdk.find_sdk_python", lambda: str(base))
-    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda: "git+https://example/plaibook.git@abc")
+    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda **_k: "git+https://example/plaibook.git@abc")
     monkeypatch.setattr("plaibook.openshell_sdk.interpreter_version", lambda _exe: (3, 11, 11))
     monkeypatch.setattr("plaibook.openshell_sdk.subprocess.run", fake_run)
     monkeypatch.setattr("plaibook.openshell_sdk.ensure_openshell_sdk", lambda python, **kwargs: None)
@@ -494,7 +536,7 @@ def test_prepare_runtime_refuses_symlink(monkeypatch, tmp_path):
     cache.mkdir(parents=True)
     (cache / "sandbox-runtime").symlink_to(tmp_path)
     monkeypatch.setattr("plaibook.openshell_sdk.find_sdk_python", lambda: "/usr/bin/python3.11")
-    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda: "/tmp/plaibook")
+    monkeypatch.setattr("plaibook.openshell_sdk.plaibook_install_spec", lambda **_k: "/tmp/plaibook")
     with pytest.raises(OpenshellSdkError, match="symlink"):
         prepare_sandbox_runtime(stderr=None, home=tmp_path)
 

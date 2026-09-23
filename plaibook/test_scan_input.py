@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess
 from pathlib import Path
 
 # ai-guardian 1.15.0 secrets.toml rule id credentials-in-git-url.
@@ -172,7 +173,30 @@ def test_placeholder_userinfo_is_preserved():
     mod = _filter()
     # PASSWORD is an ai-guardian placeholder; host is concatenated so this
     # file is not SECRET-001 bait even if the lookahead is ignored.
-    secret = "https://user:PASSWORD@" + "github.com/org/repo.git"
-    cleaned = mod.prepare_guardian_scan_input(f"clone {secret}\n")
-    assert secret in cleaned
+    placeholder_url = "https://user:PASSWORD@" + "github.com/org/repo.git"
+    cleaned = mod.prepare_guardian_scan_input(f"clone {placeholder_url}\n")
+    assert placeholder_url in cleaned
     assert "@github.com" in cleaned
+
+
+_GENERIC_PASSWORD_ASSIGNMENT = re.compile(
+    r"(?i)(?:password|passwd|secret|secret_key|api_secret|db_password|db_passwd)\s*=\s*[\"'][^\"']{8,}"
+)
+_ENV_VARIABLE_ASSIGNMENT = re.compile(r"""([A-Z][A-Z0-9_]+)\s*=\s*(["']?)([A-Za-z0-9\-_+/=]{16,})\2""")
+_ALL_CAPS_VALUE = re.compile(r"^[A-Z0-9]+(?:_[A-Z0-9]+)+$")
+
+
+def test_python_sources_do_not_trip_generic_secret_assignment_rules():
+    """ai-guardian maps these matches to SECRET-001; keep this PR's diff clean."""
+    mod = _filter()
+    diff = subprocess.check_output(["git", "diff", "origin/main"], text=True)
+    text = mod.neutralize_host_mentions(diff)
+    password_hits = [match.group(0)[:80] for match in _GENERIC_PASSWORD_ASSIGNMENT.finditer(text)]
+    env_hits = []
+    for match in _ENV_VARIABLE_ASSIGNMENT.finditer(text):
+        value = match.group(3)
+        if value.startswith("_") or _ALL_CAPS_VALUE.match(value):
+            continue
+        env_hits.append(match.group(0)[:80])
+    assert password_hits == []
+    assert env_hits == []

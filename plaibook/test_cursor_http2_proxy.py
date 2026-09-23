@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 
 from plaibook.cursor_http2_proxy import (
-    MARKER,
     ORIGINAL_CONNECT,
     CursorHttp2ProxyError,
+    http2_proxy_mark,
     patch_installed_cursor_sdk,
     patch_session_manager,
 )
@@ -74,7 +74,7 @@ def test_patches_esm_session_manager(tmp_path: Path):
     path.write_text(_ESM_STUB)
     assert patch_session_manager(path) == "patched"
     text = path.read_text()
-    assert MARKER in text
+    assert http2_proxy_mark in text
     assert ORIGINAL_CONNECT not in text
     assert 'import * as http from "http";' in text
     assert "createConnection: () => tlsSock" in text
@@ -87,7 +87,7 @@ def test_patches_cjs_session_manager(tmp_path: Path):
     path.write_text(_CJS_STUB)
     assert patch_session_manager(path) == "patched"
     text = path.read_text()
-    assert MARKER in text
+    assert http2_proxy_mark in text
     assert ORIGINAL_CONNECT not in text
     assert 'const http = require("http");' in text
     assert "node_error_js_1.connectErrorFromNodeReason" in text

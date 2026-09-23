@@ -196,7 +196,72 @@ def _checkout_source_path() -> str | None:
     return None
 
 
-def plaibook_install_spec() -> str:
+_INSTALLED_SRC_NAME = "pypi-src"
+_INSTALLED_PYPROJECT = """\
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plaibook"
+version = "%s"
+requires-python = ">=3.10"
+
+[project.scripts]
+plaibook = "plaibook.cli:main"
+plai = "plaibook.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["plaibook*"]
+
+[tool.setuptools.package-data]
+plaibook = ["share/**/*", "hashed/**/*"]
+"""
+
+
+def _direct_url_is_local_or_git(data: dict) -> bool:
+    url = str(data.get("url") or "")
+    vcs = data.get("vcs_info") or {}
+    if vcs.get("vcs") == "git" and vcs.get("commit_id") and url:
+        return True
+    return url.startswith("file:")
+
+
+def _materialize_installed_source(home: Path | None = None) -> str | None:
+    """Wheelable source tree from the plaibook files already on this interpreter.
+
+    Index-installed wheels have no checkout ``pyproject.toml`` and usually no
+    PEP 610 ``direct_url.json``. Copy the installed package (including vendored
+    ``share/``) and write a setuptools config that does not run the checkout
+    ``build_py`` hook, so ``pip wheel --no-build-isolation`` can rebuild this
+    same version into the Python 3.11 sandbox runtime.
+    """
+    pkg = Path(__file__).resolve().parent
+    if not (pkg / "__init__.py").is_file():
+        return None
+    dest = last_run_dir(home) / _INSTALLED_SRC_NAME
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        target = dest / "plaibook"
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(
+            pkg,
+            target,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", ".pytest_cache"),
+            symlinks=False,
+        )
+        from plaibook import __version__
+
+        (dest / "pyproject.toml").write_text(_INSTALLED_PYPROJECT % __version__, encoding="utf-8")
+    except OSError:
+        return None
+    if 'name = "plaibook"' not in (dest / "pyproject.toml").read_text(encoding="utf-8"):
+        return None
+    return str(dest)
+
+
+def plaibook_install_spec(*, home: Path | None = None) -> str:
     """Requirement for the plaibook distribution of this process."""
     from importlib.metadata import PackageNotFoundError, distribution
 
@@ -214,10 +279,14 @@ def plaibook_install_spec() -> str:
             raise OpenshellSdkError("plaibook direct_url.json is not valid JSON.") from exc
         if not isinstance(data, dict):
             raise OpenshellSdkError("plaibook direct_url.json is not an object.")
-        return spec_from_direct_url(data, dist.version)
+        if _direct_url_is_local_or_git(data):
+            return spec_from_direct_url(data, dist.version)
     local = _checkout_source_path()
     if local:
         return local
+    installed = _materialize_installed_source(home)
+    if installed:
+        return installed
     raise OpenshellSdkError(
         "Cannot tell which plaibook build is running (no direct_url.json and no local checkout). "
         "Reinstall from git or a local path; pip will not fetch plaibook==%s from an index."
@@ -298,8 +367,8 @@ def prepare_sandbox_runtime(*, stderr: TextIO | None = None, home: Path | None =
             "plai command. plai will create ~/.cache/ansible-plaibook/sandbox-runtime from it. "
             "Or pass --no-sandbox."
         )
-    spec = plaibook_install_spec()
     with _exclusive_runtime_lock(home):
+        spec = plaibook_install_spec(home=home)
         return _prepare_sandbox_runtime_locked(base, spec, out, home)
 
 

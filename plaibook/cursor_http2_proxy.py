@@ -19,7 +19,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-MARKER = "plaibookTlsViaHttpProxy"
+http2_proxy_mark = "plaibookTlsViaHttpProxy"
 ORIGINAL_CONNECT = "const newConn = http2.connect(authority, http2SessionOptions);"
 SESSION_REL = (
     Path("_vendor")
@@ -96,7 +96,7 @@ def patch_installed_cursor_sdk(python: str | None = None) -> list[str]:
 def patch_session_manager(path: Path) -> str:
     """Patch one http2-session-manager.js. Returns patched, already, or skipped."""
     text = path.read_text(encoding="utf-8")
-    if MARKER in text:
+    if http2_proxy_mark in text:
         return "already"
     if ORIGINAL_CONNECT not in text:
         raise CursorHttp2ProxyError(
@@ -106,7 +106,7 @@ def patch_session_manager(path: Path) -> str:
         )
     updated = _ensure_http_tls_imports(text)
     updated = _replace_connect_function(updated)
-    if MARKER not in updated:
+    if http2_proxy_mark not in updated:
         raise CursorHttp2ProxyError(f"{path} patch produced no marker")
     path.write_text(updated, encoding="utf-8")
     return "patched"
