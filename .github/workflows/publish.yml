@@ -50,10 +50,16 @@ jobs:
           python3 - <<'PY'
           import os
           import pathlib
-          import tomllib
+          import re
+          import sys
 
-          version = tomllib.loads(pathlib.Path("pyproject.toml").read_bytes())["project"]["version"]
-          tag = os.environ["RELEASE_TAG"]
+          print("python", sys.version.replace("\n", " "))
+          text = pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+          match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
+          if not match:
+              raise SystemExit("pyproject.toml has no version = \"...\" line")
+          version = match.group(1)
+          tag = os.environ.get("RELEASE_TAG", "")
           expected = "v" + version
           if tag != expected:
               raise SystemExit(f"release tag {tag!r} must be {expected!r}")
