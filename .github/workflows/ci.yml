@@ -11,7 +11,9 @@ permissions:
 
 jobs:
   test:
-    name: Test (Python ${{ matrix.python-version }}, ${{ matrix.os }})
+    # Ubuntu names stay "Test (Python 3.x)" so they match the required
+    # status checks on main. Jobs on any other runner include the OS.
+    name: "${{ matrix.os == 'ubuntu-latest' && format('Test (Python {0})', matrix.python-version) || format('Test (Python {0}, {1})', matrix.python-version, matrix.os) }}"
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
