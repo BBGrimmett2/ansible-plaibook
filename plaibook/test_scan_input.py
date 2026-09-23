@@ -39,12 +39,8 @@ def test_pr_url_plus_github_mention_is_not_a_git_credential():
         "- CI: Ubuntu 3.10\n"
         "1. @github-advanced-security: scorecard\n"
     )
-    scanned = (
-        mod.drop_unified_diff_deletions(diff)
-        + "\n--- PR/MR description ---\n"
-        + description
-    )
-    assert _GIT_CREDENTIAL_URL.search(diff + "\n--- PR/MR description ---\n" + description)
+    scanned = diff + "\n--- PR/MR description ---\n" + description
+    assert _GIT_CREDENTIAL_URL.search(scanned)
     cleaned = mod.neutralize_host_mentions(scanned)
     assert "github-advanced-security" in cleaned
     assert _GIT_CREDENTIAL_URL.search(cleaned) is None
@@ -60,7 +56,7 @@ def test_backtick_host_mention_is_not_a_git_credential():
     assert _GIT_CREDENTIAL_URL.search(mod.prepare_guardian_scan_input(text)) is None
 
 
-def test_deleted_git_userinfo_line_is_not_scanned():
+def test_deleted_git_userinfo_line_still_matches_credentials_rule():
     mod = _filter()
     password = "s" + "ecretvalue1"
     text = (
@@ -73,7 +69,23 @@ def test_deleted_git_userinfo_line_is_not_scanned():
         "+    token = None\n"
     )
     assert _GIT_CREDENTIAL_URL.search(text)
-    assert _GIT_CREDENTIAL_URL.search(mod.prepare_guardian_scan_input(text)) is None
+    assert _GIT_CREDENTIAL_URL.search(mod.prepare_guardian_scan_input(text))
+
+
+def test_deleted_double_dash_line_still_matches_credentials_rule():
+    """A deleted `--` source line is `---` in the patch, not a file header."""
+    mod = _filter()
+    password = "s" + "ecretvalue1"
+    text = (
+        "diff --git a/x.py b/x.py\n"
+        "--- a/x.py\n"
+        "+++ b/x.py\n"
+        f'---    token = "https://x-access-token:{password}@'
+        + "github.com/org/repo.git\"\n"
+        "+    token = None\n"
+    )
+    assert _GIT_CREDENTIAL_URL.search(text)
+    assert _GIT_CREDENTIAL_URL.search(mod.prepare_guardian_scan_input(text))
 
 
 def test_same_line_git_userinfo_still_matches_credentials_rule():

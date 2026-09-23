@@ -559,13 +559,14 @@ review_guardian_pip_timeout_seconds: 60
 # no real security gain.
 #
 # SECRET-001 credentials-in-git-url still blocks for same-line and
-# split-across-lines userinfo URLs. The concatenated diff+PR text drops
-# unified-diff deletion lines and strips whitespace/quote-prefixed
-# @host mentions so a removed clone URL plus a later github.com host
-# (or a review @mention) is not treated as credentials. Do not insert
-# a break on every newline, and do not drop the detector from
-# guardian_blocking_findings: a real git userinfo URL uses the same
-# SECRET-001 message.
+# split-across-lines userinfo URLs, including those on unified-diff
+# deletion lines (a secret added then deleted in the same PR stays in
+# git history). The concatenated diff+PR text strips whitespace/quote-
+# prefixed @host mentions so a github.com PR URL plus a review
+# @mention is not treated as credentials. Do not insert a break on
+# every newline, do not drop deletion lines, and do not drop the
+# detector from guardian_blocking_findings: a real git userinfo URL
+# uses the same SECRET-001 message.
 #
 # A list, not a single hardcoded value, so adding another confirmed-
 # reliable blocking category later is a config change, not a code
