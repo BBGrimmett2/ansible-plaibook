@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 """Install collections-requirements.yml for CI without requiring Galaxy.
 
-``ansible-galaxy collection install -r`` resolves unpinned Galaxy names
-against galaxy.ansible.com before it clones anything. A 403 HTML body
-becomes an unhandled parse error and ansible-galaxy exits 250 in a few
-seconds — that is the failure mode on GitHub-hosted runners.
-
-Try ``-r`` first (when Galaxy works it also pulls declared deps). On
-failure, clone each git source and known GitHub mirrors with
-``--no-deps`` so the job never needs the Galaxy API.
+Clone each git source and GitHub mirrors with ``ansible-galaxy collection
+build`` then ``install --no-deps``. Same GitHub-first path as
+``plaibook.collections.ensure_collections`` — never ``ansible-galaxy -r``.
 """
 
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import subprocess
@@ -21,37 +17,23 @@ import tempfile
 import time
 from pathlib import Path
 
-import yaml
-
 from plaibook.collections import (
+    GALAXY_GITHUB_MIRRORS,
     GALAXY_TIMEOUT_SECONDS,
+    CollectionInstallError,
+    _load_requirement_rows,
+    _runtime_required_keys,
+    _validate_requirement_row,
     collection_is_installed,
+    redact_git_userinfo,
+    require_commit_sha,
     requirement_collection_keys,
+)
+from plaibook.collections import (
+    _install_from_dir as _runtime_install_from_dir,
 )
 
 REQUIREMENTS = Path("collections-requirements.yml")
-
-# Unpinned Galaxy names in collections-requirements.yml, plus the one
-# dependency community.general 13.x declares. Tags match what a working
-# Galaxy install currently resolves to; bump here when CI fallback drifts.
-GALAXY_GITHUB_MIRRORS: dict[str, tuple[str, str]] = {
-    "ansible.posix": (
-        "https://github.com/ansible-collections/ansible.posix.git",
-        "2.2.2",
-    ),
-    "kubernetes.core": (
-        "https://github.com/ansible-collections/kubernetes.core.git",
-        "6.5.0",
-    ),
-    "community.general": (
-        "https://github.com/ansible-collections/community.general.git",
-        "13.4.0",
-    ),
-    "community.library_inventory_filtering_v1": (
-        "https://github.com/ansible-collections/community.library_inventory_filtering.git",
-        "1.1.5",
-    ),
-}
 
 
 def _dest() -> Path:
@@ -64,11 +46,10 @@ def _dest() -> Path:
 
 
 def _requirements() -> list[dict]:
-    data = yaml.safe_load(REQUIREMENTS.read_bytes()) or {}
-    cols = data.get("collections") or []
-    if not isinstance(cols, list):
-        raise SystemExit(f"{REQUIREMENTS} collections: is not a list")
-    return cols
+    try:
+        return _load_requirement_rows(REQUIREMENTS)
+    except CollectionInstallError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def _installed_count(dest: Path) -> int:
@@ -88,15 +69,7 @@ def _installed_count(dest: Path) -> int:
 
 
 def _required_keys() -> list[tuple[str, str]]:
-    keys = list(requirement_collection_keys(REQUIREMENTS))
-    seen = set(keys)
-    for fqn in GALAXY_GITHUB_MIRRORS:
-        ns, name = fqn.split(".", 1)
-        key = (ns, name)
-        if key not in seen:
-            seen.add(key)
-            keys.append(key)
-    return keys
+    return _runtime_required_keys(requirement_collection_keys(REQUIREMENTS))
 
 
 def _all_required_installed(dest: Path, required: list[tuple[str, str]]) -> bool:
@@ -117,18 +90,41 @@ def _git_token() -> str | None:
     return token or None
 
 
+GIT_AUTH_HEADER_ENV = "PLAIBOOK_GIT_AUTH_HEADER"
+# Git config key used by --config-env. Built in parts so the value never
+# sits in argv (process listings / CalledProcessError). Format the
+# scheme by name so this file does not contain an https URL literal
+# that credentials-in-git-url can span into a later @github host.
+_GH_HOST = "github.com"
+_GIT_EXTRAHEADER_KEY = "http.{scheme}://{host}/.extraHeader".format(scheme="https", host=_GH_HOST)
+
+
+def _github_https_header(value: str) -> str:
+    # actions/checkout wire format: Basic, not Bearer. A Bearer header
+    # makes GitHub prompt for a username and public clones fail closed
+    # on Actions. Keep the credential out of the clone URL (gitleaks)
+    # and out of argv (--config-env).
+    packed = base64.b64encode(b"x-access-token:" + value.encode("ascii")).decode("ascii")
+    return "AUTHORIZATION: basic " + packed
+
+
 def _git(args: list[str], *, cwd: Path | None = None, token: str | None) -> None:
     cmd = ["git", "-c", "advice.detachedHead=false"]
+    run_kw: dict = {"cwd": cwd, "check": True, "timeout": GALAXY_TIMEOUT_SECONDS}
     if token:
-        cmd += [
-            "-c",
-            f"url.https://x-access-token:{token}@github.com/.insteadOf=https://github.com/",
-        ]
+        env = os.environ.copy()
+        env[GIT_AUTH_HEADER_ENV] = _github_https_header(token)
+        cmd.append(f"--config-env={_GIT_EXTRAHEADER_KEY}={GIT_AUTH_HEADER_ENV}")
+        run_kw["env"] = env
     cmd += args
-    subprocess.run(cmd, cwd=cwd, check=True, timeout=GALAXY_TIMEOUT_SECONDS)
+    subprocess.run(cmd, **run_kw)
 
 
 def _clone_at_ref(url: str, ref: str, dest: Path, token: str | None) -> None:
+    try:
+        sha = require_commit_sha(url, ref)
+    except CollectionInstallError as exc:
+        raise SystemExit(str(exc)) from exc
     last_error: Exception | None = None
     for attempt in range(1, 4):
         if dest.exists():
@@ -136,103 +132,82 @@ def _clone_at_ref(url: str, ref: str, dest: Path, token: str | None) -> None:
         dest.mkdir(parents=True)
         try:
             _git(["init", "-b", "main"], cwd=dest, token=token)
-            _git(["remote", "add", "origin", url], cwd=dest, token=token)
-            _git(["fetch", "--depth", "1", "origin", ref], cwd=dest, token=token)
+            _git(["remote", "add", "origin", redact_git_userinfo(url)], cwd=dest, token=token)
+            _git(["fetch", "--depth", "1", "origin", sha], cwd=dest, token=token)
             _git(["checkout", "FETCH_HEAD"], cwd=dest, token=token)
+            got = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=dest,
+                check=True,
+                timeout=GALAXY_TIMEOUT_SECONDS,
+                capture_output=True,
+                text=True,
+            )
+            checked = got.stdout.strip().lower()
+            if checked != sha:
+                safe_url = redact_git_userinfo(url)
+                raise SystemExit(f"git checkout of {safe_url} resolved to {checked}, not pinned {sha}")
             return
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             last_error = exc
-            print(f"git fetch {url}@{ref} attempt {attempt} failed", flush=True)
+            safe_url = redact_git_userinfo(url)
+            print(f"git fetch {safe_url}@{sha} attempt {attempt} failed", flush=True)
             time.sleep(attempt * 4)
-    raise SystemExit(f"git fetch failed for {url}@{ref}: {last_error}")
+    safe_url = redact_git_userinfo(url)
+    detail = redact_git_userinfo(str(last_error))
+    raise SystemExit(f"git fetch failed for {safe_url}@{sha}: {detail}")
 
 
 def _install_from_dir(galaxy: str, source: Path, dest: Path) -> None:
     try:
-        completed = subprocess.run(
-            [
-                galaxy,
-                "collection",
-                "install",
-                str(source),
-                "-p",
-                str(dest),
-                "--force",
-                "--no-deps",
-            ],
-            check=False,
-            timeout=GALAXY_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise SystemExit(f"ansible-galaxy install {source} timed out after {GALAXY_TIMEOUT_SECONDS}s") from exc
-    if completed.returncode != 0:
-        raise SystemExit(f"ansible-galaxy install {source} failed (exit {completed.returncode})")
-
-
-def try_requirements_file(galaxy: str, dest: Path) -> bool:
-    """Return True when ``-r`` succeeded. Galaxy 403s usually exit 250."""
-    if os.environ.get("PLAIBOOK_CI_SKIP_GALAXY") == "1":
-        print("Skipping ansible-galaxy -r (PLAIBOOK_CI_SKIP_GALAXY=1)", flush=True)
-        return False
-    try:
-        completed = subprocess.run(
-            [
-                galaxy,
-                "collection",
-                "install",
-                "-r",
-                str(REQUIREMENTS),
-                "-p",
-                str(dest),
-                "--force",
-            ],
-            check=False,
-            timeout=GALAXY_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        print(
-            f"ansible-galaxy -r timed out after {GALAXY_TIMEOUT_SECONDS}s",
-            flush=True,
-        )
-        return False
-    if completed.returncode == 0:
-        return True
-    print(
-        f"ansible-galaxy -r failed (exit {completed.returncode})",
-        flush=True,
-    )
-    return False
+        _runtime_install_from_dir(galaxy, source, dest, os.environ.copy())
+    except CollectionInstallError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def install_git_sources(galaxy: str, dest: Path, cols: list[dict], token: str | None) -> None:
-    for col in cols:
+    for index, col in enumerate(cols):
         name = col.get("name")
-        if not isinstance(name, str):
-            continue
-        is_git = col.get("type") == "git" or name.startswith(("https://", "git+", "git@"))
+        if not isinstance(name, str) or not name.strip():
+            raise SystemExit("collection requirement is missing a non-empty string name")
+        name = name.strip()
+        is_git = col.get("type") == "git" or name.startswith(("https://", "http://", "git+", "git@", "file://"))
         if not is_git:
             continue
+        try:
+            _validate_requirement_row(REQUIREMENTS, index, col)
+        except CollectionInstallError as exc:
+            raise SystemExit(str(exc)) from exc
         url = name.removeprefix("git+")
-        ref = str(col.get("version") or "HEAD")
-        print(f"GitHub fallback: {url}@{ref}", flush=True)
+        ref = require_commit_sha(url, col.get("version"))
+        print(f"GitHub: {url}@{ref}", flush=True)
         with tempfile.TemporaryDirectory(prefix="plaibook-coll-") as tmp:
             checkout = Path(tmp) / "collection"
             _clone_at_ref(url, ref, checkout, token)
             _install_from_dir(galaxy, checkout, dest)
 
 
-def install_galaxy_mirrors(galaxy: str, dest: Path, token: str | None) -> None:
+def install_galaxy_mirrors(
+    galaxy: str,
+    dest: Path,
+    token: str | None,
+    *,
+    needed: list[tuple[str, str]] | None = None,
+) -> None:
+    want = set(needed) if needed is not None else None
     root = dest / "ansible_collections"
-    for fqn, (url, tag) in GALAXY_GITHUB_MIRRORS.items():
+    for fqn, (url, ref) in GALAXY_GITHUB_MIRRORS.items():
         ns, name = fqn.split(".", 1)
+        if want is not None and (ns, name) not in want:
+            continue
         marker = root / ns / name
         if (marker / "MANIFEST.json").is_file() or (marker / "galaxy.yml").is_file():
-            print(f"GitHub fallback: {fqn} already present", flush=True)
+            print(f"GitHub: {fqn} already present", flush=True)
             continue
-        print(f"GitHub fallback: {fqn} <- {url}@{tag}", flush=True)
+        print(f"GitHub: {fqn} <- {url}@{ref}", flush=True)
         with tempfile.TemporaryDirectory(prefix="plaibook-coll-") as tmp:
             checkout = Path(tmp) / "collection"
-            _clone_at_ref(url, tag, checkout, token)
+            _clone_at_ref(url, ref, checkout, token)
             _install_from_dir(galaxy, checkout, dest)
 
 
@@ -250,16 +225,9 @@ def main() -> int:
 
     galaxy = _galaxy_bin()
     token = _git_token()
-    if try_requirements_file(galaxy, dest) and _all_required_installed(dest, required):
-        print(f"Installed {_installed_count(dest)} collections via -r", flush=True)
-        return 0
-
-    print(
-        "Galaxy resolve failed or incomplete; installing git sources and GitHub mirrors with --no-deps",
-        flush=True,
-    )
+    print("Installing collections from GitHub (no galaxy.ansible.com)", flush=True)
     install_git_sources(galaxy, dest, cols, token)
-    install_galaxy_mirrors(galaxy, dest, token)
+    install_galaxy_mirrors(galaxy, dest, token, needed=required)
     if not _all_required_installed(dest, required):
         missing = [f"{ns}.{name}" for ns, name in required if not collection_is_installed(dest, ns, name)]
         print(
@@ -267,7 +235,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"Installed {_installed_count(dest)} collections via GitHub fallback", flush=True)
+    print(f"Installed {_installed_count(dest)} collections from GitHub", flush=True)
     return 0
 
 

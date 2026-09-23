@@ -1,0 +1,3 @@
+# Collection range: openai>=1.0.0,<4.0.0
+# Compile: scripts/compile-hashed-sdks.sh
+openai>=1.0.0,<4.0.0

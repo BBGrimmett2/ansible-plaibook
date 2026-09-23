@@ -8,10 +8,11 @@ This repository uses `uv` for reproducible environment management with a pinned 
 ```bash
 uv sync --extra dev
 # uv sync installs both console scripts: plaibook and plai (same main)
-# First `plai review` installs collections into
-# ~/.cache/ansible-plaibook/collections (never ~/.ansible).
-# Playbook tests still need:
-uv run ansible-galaxy collection install -r collections-requirements.yml
+# First `plai review` installs collections from GitHub into
+# ~/.cache/ansible-plaibook/collections (never ~/.ansible, never
+# galaxy.ansible.com).
+# Playbook tests still need collections on the isolated path:
+uv run python scripts/ci-install-collections.py
 ```
 
 If the project's `.venv` is not on PATH, invoke the CLI as
@@ -28,11 +29,28 @@ uv run ./scripts/run_playbook_tests.sh             # Offline Ansible playbook te
 uv run ansible-playbook review.yml --syntax-check  # Playbook syntax check
 ```
 
+## Runtime SDK pins
+
+Provider SDKs, the OpenShell SDK, the Python 3.11 sandbox-runtime's
+plaibook dependencies, and the setuptools/wheel used to wheel this
+plaibook build are installed from `plaibook/hashed/*-requirements.txt`
+with `pip install --require-hashes`. The sandbox runtime installs
+hashed setuptools, wheels this plaibook with `--no-build-isolation`,
+then `pip install --require-hashes --no-deps` of that wheel. After
+changing a pin in `plaibook/hashed/*.in`, regenerate:
+
+```bash
+./scripts/compile-hashed-sdks.sh
+```
+
+Do not pass version ranges to `pip install` in `plaibook/provider_sdk.py`
+or `plaibook/openshell_sdk.py`.
+
 ## Collection pins
 
-`collections-requirements.yml` mixes Galaxy collections, floating git
-`version: main` entries, and SHA pins for provider collections whose
-module interface this repo calls (`aknochow.cursor`, `aknochow.openai`).
+`collections-requirements.yml` is git sources at commit SHAs: aknochow
+interface pins (`aknochow.cursor`, `aknochow.openai`, and the other
+family collections) plus ansible-collections release commits.
 Dependabot cannot update that file. After a sibling collection merge,
 either bump the SHA by hand or run:
 
@@ -41,9 +59,8 @@ uv run python scripts/bump_collection_pins.py --write
 ```
 
 `.github/workflows/bump-collection-pins.yml` does the same weekly (and
-on `workflow_dispatch`) and opens a PR. Floating `version: main` pins
-are left alone. Galaxy collections (`ansible.posix`, and the others) stay unpinned
-until they grow an explicit version.
+on `workflow_dispatch`) and opens a PR. ansible-collections release SHAs stay on the tagged
+commit — the bumper does not float those to default-branch HEAD.
 
 ## Commit Standards
 

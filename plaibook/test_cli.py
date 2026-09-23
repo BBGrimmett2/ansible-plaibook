@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import yaml
 
 from plaibook.cli import (
@@ -17,6 +18,7 @@ from plaibook.cli import (
     extra_vars_from_args,
     main,
 )
+from plaibook.openshell_sdk import OpenshellSdkError
 from plaibook.playbook import (
     build_ansible_command,
     find_playbook_root,
@@ -25,6 +27,11 @@ from plaibook.playbook import (
     last_run_path,
 )
 from plaibook.summary import enrich_last_run, format_pretty
+
+
+@pytest.fixture(autouse=True)
+def _noop_provider_sdk_install(monkeypatch):
+    monkeypatch.setattr("plaibook.cli.ensure_provider_sdk", lambda *args, **kwargs: None)
 
 
 def _args(**overrides):
@@ -149,6 +156,38 @@ def test_extra_vars_sandbox_and_passthrough():
         "runId0123456789",
     )
     assert extras["use_sandbox"] is True
+
+
+def test_cmd_review_does_not_pass_controller_interpreter_as_extra_var(tmp_path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "review.yml").write_text("---\n")
+    (checkout / "ansible.cfg").write_text("[defaults]\n")
+    home = tmp_path / "home"
+    (home / ".cache" / "ansible-plaibook").mkdir(parents=True)
+    seen = {}
+
+    def fake_run(command, *, playbook_root, verbose, env=None):
+        extras = json.loads(command[command.index("-e") + 1])
+        seen["extras"] = extras
+        path = last_run_path(extras["last_run_id"], home=home)
+        path.write_text(json.dumps({"run_id": extras["last_run_id"], "status": "ok", "targets": []}))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr("plaibook.cli.openshell_available", lambda: True)
+    monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: False)
+    monkeypatch.setattr("plaibook.cli.reexec_sandbox_runtime", lambda **kwargs: None)
+    monkeypatch.setattr("plaibook.cli.run_ansible_playbook", fake_run)
+    monkeypatch.setattr(
+        "plaibook.cli.build_ansible_command",
+        lambda **kwargs: build_ansible_command(ansible_bin="ansible-playbook", **kwargs),
+    )
+    monkeypatch.setattr("plaibook.cli.last_run_path", lambda run_id: last_run_path(run_id, home=home))
+
+    code = cmd_review(_args(target="org/repo/1", playbook_root=str(checkout), use_sandbox=False))
+    assert code == 0
+    assert "ansible_python_interpreter" not in seen["extras"]
 
 
 def test_cmd_review_skips_resolve_family_when_agent_family_extra(tmp_path, monkeypatch):
@@ -567,7 +606,8 @@ def test_pretty_and_json_from_last_run(tmp_path):
     assert "Major  plaibook/cli.py:42" in pretty
     assert "Default stdout only prints finding counts" in pretty
     assert "A human never sees why the score dropped" in pretty
-    assert "Example score still looks like a /10 scale." not in pretty
+    assert "Minor  docs/getting-started.md:86" in pretty
+    assert "Example score still looks like a /10 scale." in pretty
     assert "2 minor" in pretty
     assert "last_run:" in pretty
     assert "findings.md:" in pretty
@@ -599,6 +639,57 @@ def test_pretty_explains_same_commit_cache_hit():
     assert "$0.00 is expected" in pretty
     assert "Re-run with -f to force" in pretty
     assert "$0.0000" in pretty
+
+
+def test_pretty_explains_guardian_forced_needs_changes_at_100():
+    pretty = format_pretty(
+        {
+            "status": "ok",
+            "guardian_forced_needs_changes": True,
+            "guardian_blocking_rule_ids": ["SECRET-001"],
+            "targets": [
+                {
+                    "target": "org/repo#64",
+                    "verdict": "NEEDS_CHANGES",
+                    "score": 100.0,
+                    "scores": {"functionality": 100.0, "security": 100.0, "quality": 100.0},
+                    "findings_count": {"critical": 0, "major": 0, "minor": 0, "nit": 1},
+                    "findings": [
+                        {
+                            "severity": "Nit",
+                            "file": "plaibook/openshell_sdk.py",
+                            "line": 227,
+                            "description": "Sandbox-runtime creation is not serialized.",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert "NEEDS_CHANGES" in pretty
+    assert "100.0%" in pretty
+    assert "blocked by ai-guardian (SECRET-001)" in pretty
+    assert "independent of lens scores" in pretty
+    assert "Nit  plaibook/openshell_sdk.py:227" in pretty
+    assert "Sandbox-runtime creation is not serialized." in pretty
+
+
+def test_pretty_notes_incomplete_exploration():
+    pretty = format_pretty(
+        {
+            "status": "ok",
+            "exploration_incomplete": True,
+            "targets": [
+                {
+                    "target": "org/repo#1",
+                    "verdict": "READY_FOR_HUMAN_REVIEW",
+                    "score": 96.7,
+                }
+            ],
+        }
+    )
+    assert "exploration incomplete" in pretty
+    assert "READY_FOR_HUMAN_REVIEW" in pretty
 
 
 def test_pretty_explains_ci_preflight_skip_without_full_report():
@@ -1169,6 +1260,7 @@ def test_cmd_review_pr_fails_closed_without_openshell(tmp_path, monkeypatch, cap
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr("plaibook.cli.openshell_available", lambda: False)
     monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: False)
+    monkeypatch.setattr("plaibook.cli.reexec_sandbox_runtime", lambda **kwargs: None)
     monkeypatch.setattr(
         "plaibook.cli.run_ansible_playbook",
         lambda *args, **kwargs: called.append(True),
@@ -1179,6 +1271,102 @@ def test_cmd_review_pr_fails_closed_without_openshell(tmp_path, monkeypatch, cap
     assert code == 2
     assert called == []
     assert "require a sandbox" in err
+
+
+def test_cmd_review_sandbox_runtime_error_stops_before_playbook(tmp_path, monkeypatch, capsys):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "review.yml").write_text("---\n")
+    (checkout / "ansible.cfg").write_text("[defaults]\n")
+    called = []
+
+    def boom(**_kwargs):
+        raise OpenshellSdkError("needs Python 3.11")
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: False)
+    monkeypatch.setattr("plaibook.cli.reexec_sandbox_runtime", boom)
+    monkeypatch.setattr(
+        "plaibook.cli.run_ansible_playbook",
+        lambda *args, **kwargs: called.append(True),
+    )
+    collections = []
+    monkeypatch.setattr("plaibook.cli.ensure_collections", lambda *a, **k: collections.append(True))
+
+    code = cmd_review(_args(target="org/repo/1", playbook_root=str(checkout)))
+    err = capsys.readouterr().err
+    assert code == 2
+    assert called == []
+    assert collections == []
+    assert "needs Python 3.11" in err
+
+
+def test_cmd_review_reexecs_before_collections_when_sandboxed(tmp_path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "review.yml").write_text("---\n")
+    (checkout / "ansible.cfg").write_text("[defaults]\n")
+    home = tmp_path / "home"
+    (home / ".cache" / "ansible-plaibook").mkdir(parents=True)
+    order = []
+
+    def fake_run(command, *, playbook_root, verbose, env=None):
+        extras = json.loads(command[command.index("-e") + 1])
+        path = last_run_path(extras["last_run_id"], home=home)
+        path.write_text(json.dumps({"run_id": extras["last_run_id"], "status": "ok", "targets": []}))
+        order.append("playbook")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr("plaibook.cli.openshell_available", lambda: True)
+    monkeypatch.setattr("plaibook.cli.running_inside_openshell", lambda: False)
+    monkeypatch.setattr("plaibook.cli.reexec_sandbox_runtime", lambda **kwargs: order.append("reexec"))
+    monkeypatch.setattr("plaibook.cli.ensure_collections", lambda *a, **k: order.append("collections"))
+    monkeypatch.setattr("plaibook.cli.run_ansible_playbook", fake_run)
+    monkeypatch.setattr(
+        "plaibook.cli.build_ansible_command",
+        lambda **kwargs: build_ansible_command(ansible_bin="ansible-playbook", **kwargs),
+    )
+    monkeypatch.setattr("plaibook.cli.last_run_path", lambda run_id: last_run_path(run_id, home=home))
+
+    code = cmd_review(_args(target="org/repo/1", playbook_root=str(checkout), use_sandbox=True))
+    assert code == 0
+    assert order[:2] == ["reexec", "collections"]
+
+
+def test_cmd_review_installs_openai_provider_sdk(tmp_path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "review.yml").write_text("---\n")
+    (checkout / "ansible.cfg").write_text("[defaults]\n")
+    home = tmp_path / "home"
+    (home / ".cache" / "ansible-plaibook").mkdir(parents=True)
+    families = []
+
+    def fake_run(command, *, playbook_root, verbose, env=None):
+        extras = json.loads(command[command.index("-e") + 1])
+        path = last_run_path(extras["last_run_id"], home=home)
+        path.write_text(json.dumps({"run_id": extras["last_run_id"], "status": "ok", "targets": []}))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr("plaibook.cli.run_ansible_playbook", fake_run)
+    monkeypatch.setattr(
+        "plaibook.cli.build_ansible_command",
+        lambda **kwargs: build_ansible_command(ansible_bin="ansible-playbook", **kwargs),
+    )
+    monkeypatch.setattr("plaibook.cli.last_run_path", lambda run_id: last_run_path(run_id, home=home))
+    monkeypatch.setattr("plaibook.cli.ensure_provider_sdk", lambda family, **kwargs: families.append(family))
+
+    code = cmd_review(
+        _args(
+            commit=True,
+            playbook_root=str(checkout),
+            cli_extra_vars=["agent_family=openai"],
+        )
+    )
+    assert code == 0
+    assert families == ["openai"]
 
 
 def test_load_vars_malformed_yaml_is_config_error(tmp_path):

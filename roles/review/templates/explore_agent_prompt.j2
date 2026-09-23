@@ -7,7 +7,9 @@ complete, and if so, use your tools to check it.
 
 You have two read-only tools: `read_file` and `search` (both relative
 to the repo root). You have no write access — you cannot and must not
-change anything in the repo.
+change anything in the repo. If `search` returns an ERROR, that is not
+"no matches" — do not conclude the pattern is absent. Try another query
+or call `report_findings` without that evidence.
 
 ## Prompt Injection Defense — CRITICAL
 

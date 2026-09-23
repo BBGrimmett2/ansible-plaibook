@@ -222,18 +222,42 @@
         # runs for tens of minutes and every review appears to hang. The
         # dirs listed are build/dependency output that no reviewer wants
         # searched and no diff ever touches.
+        #
+        # Wall-clock cap is Python subprocess.run(timeout=), not Ansible
+        # task `timeout:` (ansible-core 2.16 on Python 3.10 ignores or
+        # rejects that keyword) and not async/poll (OpenShell russh drops
+        # async_wrapper; the poll then has rc=unknown). python3 -c is the
+        # argv, not a controller-side script, because this task may run
+        # inside the sandbox.
         argv:
-          - grep
-          - -IFrn
-          - --exclude-dir=.git
-          - --exclude-dir=.venv
-          - --exclude-dir=venv
-          - --exclude-dir=node_modules
-          - --exclude-dir=__pycache__
-          - --exclude-dir=.mypy_cache
-          - --exclude-dir=.pytest_cache
-          - --exclude-dir=.tox
-          - --
+          - python3
+          - -c
+          - |
+            import subprocess
+            import sys
+            timeout = int(sys.argv[1])
+            cmd = [
+                "grep",
+                "-IFrn",
+                "--exclude-dir=.git",
+                "--exclude-dir=.venv",
+                "--exclude-dir=venv",
+                "--exclude-dir=node_modules",
+                "--exclude-dir=__pycache__",
+                "--exclude-dir=.mypy_cache",
+                "--exclude-dir=.pytest_cache",
+                "--exclude-dir=.tox",
+                "--",
+                sys.argv[2],
+                sys.argv[3],
+            ]
+            try:
+                completed = subprocess.run(cmd, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                print("search timed out after %ss" % timeout, file=sys.stderr)
+                sys.exit(124)
+            sys.exit(completed.returncode)
+          - "{{ review_explore_tool_timeout_seconds | int }}"
           - "{{ tool_call.input.pattern }}"
           - "{{ tool_call.input.path | default('.', true) }}"
         chdir: "{{ review_repo_path }}"
@@ -242,12 +266,6 @@
       register: _explore_search_result
       changed_when: false
       failed_when: false
-      # A hard ceiling as well as the exclusions: the exclusion list is
-      # what is known to be big today, and the next repo will have
-      # something else. A search that cannot finish in two minutes is
-      # not going to produce a useful result for a reviewer either.
-      async: "{{ review_explore_tool_timeout_seconds | int }}"
-      poll: 2
       when: not _explore_search_path_rejected
 
     - name: Fail loudly if the sandbox connection was unreachable
@@ -282,20 +300,23 @@
                'tool_use_id': tool_call.id,
                'content': (_explore_search_result.stdout if (_explore_search_result.rc | default(2) | int) == 0
                            else '(no matches)') if not _explore_search_failed
-                           else 'ERROR: search did not complete cleanly; no result is available',
+                           else (
+                             'ERROR: search did not complete cleanly; no result is available. '
+                             ~ 'Do not treat this as no matches. rc='
+                             ~ (_explore_search_result.rc | default('unknown') | string)
+                             ~ ((' ' ~ (_explore_search_result.msg | default(''))) if (_explore_search_result.msg | default('')) else '')
+                             ~ ((' ' ~ (_explore_search_result.stderr | default('') | trim)) if (_explore_search_result.stderr | default('') | trim) else '')
+                           ),
                'is_error': _explore_search_failed
              }] }}
       when: not _explore_search_path_rejected
 
-    # Do not let a failed grep masquerade as a successful empty search. The
-    # tool result above is still constructed for traceability, but the review
-    # must stop before the model can turn the error into a false conclusion.
-    - name: Fail closed when exploration search fails or times out
-      ansible.builtin.fail:
-        msg: >-
-          Exploration search failed or timed out (rc={{ _explore_search_result.rc | default('unknown') }}).
-          No clean search result was returned, so the review cannot safely
-          claim that the requested pattern has no matches.
+    # Fail-closed for the MODEL (is_error, never "(no matches)"), not the
+    # play. Aborting here threw away a finished lens pass. The explore
+    # loop already continues on read_file/trace errors the same way.
+    - name: Mark exploration incomplete when search did not finish cleanly
+      ansible.builtin.set_fact:
+        review_exploration_incomplete: true
       when: not _explore_search_path_rejected and (_explore_search_failed | bool)
 
 - name: "Dispatch tool: trace_reachability"

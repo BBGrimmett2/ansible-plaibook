@@ -16,10 +16,23 @@ pip install plaibook
 plai review
 ```
 
+Needs Python 3.10 or newer (3.10 stays on ansible-core 2.16; 3.11+
+gets 2.18/2.19). OpenShell sandboxes need Python 3.11+. A 3.10 `plai review`
+creates `~/.cache/ansible-plaibook/sandbox-runtime` from the first
+`python3.11` (or newer) it finds, installs this plaibook build, the
+OpenShell SDK, and the configured provider SDK (openai / anthropic /
+google-genai) there, and continues with that interpreter. `--no-sandbox`
+stays on the 3.10 interpreter. OpenShell sandbox *policy* does not need
+provider API hosts for a default review: model calls stay on this
+machine. Guest allow lists matter if you override `sandbox_policy`
+(that replaces the gateway default, including network) or run
+checklists that need egress. See
+[`docs/sandbox-and-agent-safety.md`](sandbox-and-agent-safety.md#openshell-network-policy-vs-provider-apis).
 `plai review` with no arguments reviews `HEAD` in the current
-directory. The wheel vendors `review.yml`. First run installs Galaxy
-collections into `~/.cache/ansible-plaibook/collections` (never
-`~/.ansible`). See [`plaibook/README.md`](../plaibook/README.md).
+directory. The wheel vendors `review.yml`. First run clones collections
+from GitHub into `~/.cache/ansible-plaibook/collections` (never
+galaxy.ansible.com, never `~/.ansible`). See
+[`plaibook/README.md`](../plaibook/README.md).
 Until this version is on PyPI, `pip install .` from this checkout is
 the same wheel. Use a virtualenv under your home directory, not `/tmp`:
 macOS XProtect blocks scripts that appear in `/tmp` and then run.

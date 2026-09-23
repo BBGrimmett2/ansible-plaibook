@@ -45,7 +45,9 @@
   ansible.builtin.debug:
     msg: >-
       Exploration pass: {{ review_explore_findings | length }}
-      additional finding(s) ({{ explore_turn_count }} turn(s)).
+      additional finding(s) ({{ explore_turn_count }} turn(s)){{
+        '; one or more searches did not complete cleanly' if (review_exploration_incomplete | default(false) | bool) else ''
+      }}.
 
 # Exploration findings affect verdict but don't retroactively adjust lens scores.
 # Verify pass (when enabled) recomputes scores against combined set.

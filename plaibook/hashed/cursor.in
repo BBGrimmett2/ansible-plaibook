@@ -1,0 +1,3 @@
+# pyproject range: cursor-sdk>=1.0.31,<2.0.0
+# Compile: scripts/compile-hashed-sdks.sh
+cursor-sdk>=1.0.31,<2.0.0

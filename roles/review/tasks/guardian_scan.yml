@@ -58,11 +58,26 @@
     # surrounding context makes it obvious which section it came from
     # even though ai-guardian's line_number is an offset into this
     # combined string, not a real file line.
+    # credentials-in-git-url matches across newlines. Do not insert a
+    # break on every newline — that hides a credential split across
+    # source lines. Do not drop unified-diff deletion lines: a secret
+    # added then deleted in the same PR stays in git history and must
+    # still force SECRET-001 (including a deleted line that starts with
+    # `--` and therefore looks like `---` in the patch). Concatenate
+    # the PR/MR description, then strip whitespace/quote-prefixed
+    # @host mentions so a github.com PR URL plus a review @mention is
+    # not treated as credentials. Do not strip @github.com (and the
+    # other git hosts): a quote-split userinfo URL still has to match.
+    # Same-line and split-across-lines userinfo still match.
     - name: Build the shared scan input from the diff and PR/MR description
       ansible.builtin.set_fact:
         _guardian_scan_input: >-
           {{ review_full_diff
              ~ ((_guardian_real_nl ~ _guardian_real_nl ~ '--- PR/MR description ---' ~ _guardian_real_nl ~ review_context) if review_context else '') }}
+
+    - name: Keep @host mentions from looking like git credentials
+      ansible.builtin.set_fact:
+        _guardian_scan_input: "{{ _guardian_scan_input | neutralize_host_mentions }}"
 
     - name: Truncate the scan input if it exceeds the configured safety bound
       ansible.builtin.set_fact:
@@ -566,7 +581,7 @@
     # not whether it gets computed.
     - name: Determine which findings (if any) are in a blocking rule_id category
       ansible.builtin.set_fact:
-        guardian_blocking_findings: "{{ guardian_findings | selectattr('rule_id', 'in', review_guardian_blocking_rule_ids) | list }}"
+        guardian_blocking_findings: "{{ guardian_findings | blocking_guardian_findings(review_guardian_blocking_rule_ids) }}"
 
     - name: Clean up the temporary input and findings files
       ansible.builtin.file:

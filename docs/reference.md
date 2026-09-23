@@ -22,7 +22,7 @@ status: stable
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `use_sandbox` | `true` for `pr`/`branch` on a normal host with the OpenShell SDK; skipped inside an OpenShell sandbox | Runs the target-repo checkout and checklist execution inside an OpenShell sandbox. Nested sandboxing is skipped only when `/etc/openshell/auth/sandbox.jwt` exists. `OPENSHELL_ENDPOINT`, `OPENSHELL_SANDBOX`, and `OPENSHELL_SANDBOX_ID` are not containment. `plai review --no-sandbox` skips it. Missing SDK on a normal host fails closed. A copy of the SDK in another venv does not count. |
+| `use_sandbox` | `true` for `pr`/`branch` on a normal host; skipped inside an OpenShell sandbox | Runs the target-repo checkout and checklist execution inside an OpenShell sandbox. Nested sandboxing is skipped only when `/etc/openshell/auth/sandbox.jwt` exists. `OPENSHELL_ENDPOINT`, `OPENSHELL_SANDBOX`, and `OPENSHELL_SANDBOX_ID` are not containment. `plai review --no-sandbox` skips it. The SDK requires Python 3.11+. On Python 3.10, `plai review` creates `~/.cache/ansible-plaibook/sandbox-runtime` from the first Python 3.11+ it finds, installs this plaibook build and the SDK there, and continues in that interpreter. The 3.10 install is not modified. |
 | `post_results` | `false` | Posts the rendered review back to the real PR/MR. Reviewing is safe to automate; posting is a write to shared state and needs explicit opt-in. |
 | `fail_on_regressions` | `false` for `pr`/`branch`, `true` for `commit` | Whether a `NEEDS_CHANGES` verdict with a real Critical/Major finding makes the Ansible run itself exit non-zero. Lets a `commit_review` invocation gate a hook on the exit code directly. |
 | `review_same_commit_fast_path_enabled` | `true` | Skips lens dispatch, merge, and persistence when the target's current commit matches the last-reviewed one. `plai review -f` / `--force` sets this `false`. Pretty stdout labels a cache hit so a $0.00 cost is not mistaken for a live run. |
@@ -40,7 +40,7 @@ status: stable
 | `review_openai_max_completion_tokens` | `16384` | Hosted OpenAI completion budget for lens, exploration, and verification calls. |
 | `review_openai_lens_reasoning_effort` | API default | Optional explicit `reasoning_effort` for hosted OpenAI lens calls, such as `low`, `medium`, `high`, `xhigh`, or `max`. Explore/verify tool calls remain on the hosted tool-compatible `none` setting. |
 | `review_openai_continuity_max_completion_tokens` | `review_openai_max_completion_tokens` | Completion budget for the no-tool continuity audit; prevents reasoning models from exhausting a small structured-output budget before returning JSON. |
-| `review_explore_tool_timeout_seconds` | `120` | Per-search wall-clock ceiling. A failed or timed-out search fails the review instead of being treated as an empty result. |
+| `review_explore_tool_timeout_seconds` | `120` | Per-search wall-clock ceiling, enforced with `subprocess.run(timeout=)` so ansible-core 2.16 (Python 3.10) still caps grep. A failed or timed-out search is an error tool result, never an empty result. |
 | `review_explore_max_tool_calls` | `12` | Total read-only exploration tool calls per target. |
 | `review_verify_model` | `claude-haiku-4-5` | Model used for the independent Critical/Major verification pass, deliberately a cheaper tier than the lens dispatch, since verification is lower-stakes per call and runs more often. |
 
@@ -55,4 +55,5 @@ status: stable
 | Variable | Default | Purpose |
 |---|---|---|
 | `cleanup_sandbox_onfail` | `true` | Tears the sandbox down even after a failed run. Set `false` to leave a failed run's sandbox up for debugging. |
+| `sandbox_policy` | `{}` (no override) | Passed to `aknochow.openshell.sandbox`. Empty keeps the gateway default. Any explicit policy **replaces** that default, including network egress. Default `plai review` does not need OpenAI/Anthropic/Gemini/Cursor hosts in the *guest*; those SDK calls run on the controller. See [sandbox-and-agent-safety.md](sandbox-and-agent-safety.md#openshell-network-policy-vs-provider-apis). |
 | `sandbox_tls_source` | n/a | Overrides the sandbox's TLS source when the default doesn't apply. |

@@ -49,7 +49,10 @@
         'total_output_tokens': pipeline_total_output_tokens | default(0) | int,
         'total_thinking_tokens': pipeline_total_thinking_tokens | default(0) | int,
         'agents_dispatched': pipeline_agent_calls | default([]) | length,
-        'guardian_scan_available': guardian_scan_available | default(false) | bool
+        'guardian_scan_available': guardian_scan_available | default(false) | bool,
+        'guardian_forced_needs_changes': guardian_forced_needs_changes | default(false) | bool,
+        'guardian_blocking_rule_ids': guardian_blocking_findings | default([]) | map(attribute='rule_id') | list | unique | list,
+        'exploration_incomplete': review_exploration_incomplete | default(false) | bool
       } | to_nice_json }}
 
 # A stable, predictable path (NOT date/sha-based like findings.md/

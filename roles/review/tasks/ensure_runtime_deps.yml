@@ -1,0 +1,70 @@
+---
+# Collections are also installed by the plai CLI before ansible-playbook.
+# This task covers `ansible-playbook review.yml` and a controller whose
+# openshell pip package is missing or is an editable 0.0.0a0 that
+# `pip install --upgrade` will not replace. Sandbox modules import the
+# SDK in the playbook interpreter, so the install has to finish before
+# aknochow.openshell.sandbox runs. Python 3.10 cannot import that SDK.
+# `plai review` switches to ~/.cache/ansible-plaibook/sandbox-runtime
+# first. A direct ansible-playbook run on 3.10 fails here without
+# uninstalling an existing openshell.
+# Controller helper processes use ansible_playbook_python (this
+# ansible-playbook interpreter, 3.11 after re-exec). host_vars
+# ansible_python_interpreter can still name the original 3.10 venv.
+
+# No Ansible task `timeout:` here: ansible-core 2.16 (Python 3.10) does
+# not support that keyword, and async/poll is unsafe over OpenShell
+# russh. Each helper already applies subprocess.run(timeout=) —
+# GALAXY_TIMEOUT_SECONDS (600), provider SDK 300, OpenShell SDK 300.
+
+- name: Ensure review collections are installed
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python | default(ansible_python_interpreter) }}"
+      - -c
+      - |
+        import sys
+        from pathlib import Path
+        from plaibook.collections import CollectionInstallError, ensure_collections
+        try:
+            ensure_collections(Path(sys.argv[1]))
+        except CollectionInstallError as exc:
+            print(exc, file=sys.stderr)
+            sys.exit(1)
+      - "{{ playbook_dir }}"
+  register: _ensure_collections
+  changed_when: "'Installing Ansible collections' in (_ensure_collections.stderr | default(''))"
+
+- name: Ensure the selected provider Python SDK is installed
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python | default(ansible_python_interpreter) }}"
+      - -c
+      - |
+        import sys
+        from plaibook.provider_sdk import ProviderSdkError, ensure_provider_sdk
+        try:
+            ensure_provider_sdk(sys.argv[1])
+        except ProviderSdkError as exc:
+            print(exc, file=sys.stderr)
+            sys.exit(1)
+      - "{{ agent_family | default('') }}"
+  register: _ensure_provider_sdk
+  changed_when: "'Installing' in (_ensure_provider_sdk.stderr | default('')) and 'provider SDK' in (_ensure_provider_sdk.stderr | default(''))"
+
+- name: Ensure the OpenShell SDK is installed for sandbox reviews
+  when: use_sandbox | bool
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python | default(ansible_python_interpreter) }}"
+      - -c
+      - |
+        import sys
+        from plaibook.openshell_sdk import OpenshellSdkError, ensure_openshell_sdk
+        try:
+            ensure_openshell_sdk()
+        except OpenshellSdkError as exc:
+            print(exc, file=sys.stderr)
+            sys.exit(1)
+  register: _ensure_openshell_sdk
+  changed_when: "'Installing OpenShell SDK' in (_ensure_openshell_sdk.stderr | default(''))"

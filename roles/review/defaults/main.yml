@@ -372,9 +372,13 @@ review_explore_enabled: true
 # tends to keep exploring until forced to conclude on the last allowed
 # turn, so turn 4 tends to be pure unused cost.
 review_explore_max_turns: 3
-# Hard ceiling for one read-only search/grep command. A failed or timed-out
-# search is surfaced as an error and aborts the run rather than becoming a
-# false "no matches" result. Override for unusually large repositories.
+# Hard ceiling for one read-only search/grep command, applied via
+# subprocess.run(timeout=) inside the delegated python3 wrapper.
+# ansible-core 2.16 has no task-level timeout keyword; Ansible async is
+# unsafe over OpenShell russh (poll rc=unknown). A failed or timed-out
+# search is returned to the model as an is_error tool result (never as
+# "no matches") and flagged review_exploration_incomplete; the review
+# continues. Override for unusually large repositories.
 review_explore_tool_timeout_seconds: 120
 # Total number of read-only exploration tool calls in one target. This keeps a
 # model that repeatedly asks for searches from consuming an unbounded wall
@@ -553,6 +557,17 @@ review_guardian_pip_timeout_seconds: 60
 # flags any RFC 1918 range unconditionally, with no test-fixture
 # exemption). Blocking on either right now would fail real reviews for
 # no real security gain.
+#
+# SECRET-001 credentials-in-git-url still blocks for same-line and
+# split-across-lines userinfo URLs, including those on unified-diff
+# deletion lines (a secret added then deleted in the same PR stays in
+# git history). The concatenated diff+PR text strips whitespace/quote-
+# prefixed @user mentions so a github.com PR URL plus a review
+# @mention is not treated as credentials. Do not strip @github.com:
+# adjacent quoted fragments are a real git userinfo URL. Do not insert
+# a break on every newline, do not drop deletion lines, and do not drop
+# the detector from guardian_blocking_findings: a real git userinfo URL
+# uses the same SECRET-001 message.
 #
 # A list, not a single hardcoded value, so adding another confirmed-
 # reliable blocking category later is a config change, not a code

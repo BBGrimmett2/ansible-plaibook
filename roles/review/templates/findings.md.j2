@@ -24,16 +24,20 @@
 ## Code Review: {{ briefing_project }} ({{ briefing_branch }})
 
 ### Verdict: {{ review_verdict }}
+{% if review_exploration_incomplete | default(false) %}
+**Exploration incomplete**: at least one repo search did not finish cleanly (timeout or tool error). That is not evidence the pattern is absent.
+{% endif %}
 {% if guardian_forced_needs_changes | default(false) %}
-**Blocked by ai-guardian**: {{ guardian_blocking_findings | length }} finding(s) in a blocking category ({{ guardian_blocking_findings | map(attribute='rule_id') | unique | join(', ') }}) — see Security Scan below. This applies independently of the lens/verify scores and findings above.
+**Blocked by ai-guardian**: {{ guardian_blocking_findings | length }} finding(s) in a blocking category ({{ guardian_blocking_findings | map(attribute='rule_id') | list | unique | join(', ') }}) — see Security Scan below. This applies independently of the lens/verify scores and findings above.
 {% endif %}
 
 ### Scores
+{% set scored_findings = deduped_findings | rejectattr('evidence_status', 'equalto', 'refuted') | list %}
 | Lens | Score | Findings |
 |---|---|---|
-| Functionality | {{ '%.1f' | format(score_functionality | float) }}% | {{ deduped_findings | selectattr('lens', 'equalto', 'Functionality') | list | length }} |
-| Security | {{ '%.1f' | format(score_security | float) }}% | {{ deduped_findings | selectattr('lens', 'equalto', 'Security') | list | length }} |
-| Quality | {{ '%.1f' | format(score_quality | float) }}% | {{ deduped_findings | selectattr('lens', 'equalto', 'Quality') | list | length }} |
+| Functionality | {{ '%.1f' | format(score_functionality | float) }}% | {{ scored_findings | selectattr('lens', 'equalto', 'Functionality') | list | length }} |
+| Security | {{ '%.1f' | format(score_security | float) }}% | {{ scored_findings | selectattr('lens', 'equalto', 'Security') | list | length }} |
+| Quality | {{ '%.1f' | format(score_quality | float) }}% | {{ scored_findings | selectattr('lens', 'equalto', 'Quality') | list | length }} |
 | **Overall** | **{{ '%.1f' | format(score_overall | float) }}%** | |
 
 ### Findings
@@ -179,13 +183,14 @@ false-positive class on ordinary content this pipeline scans
 (PROMPT-INJECTION-001 on Python dunder methods like `__init__`,
 SSRF-001 on private-range IPs in test/example code) — a hit in either
 category is worth a skeptical read, not automatic action. Neither
-blocks the verdict.
+blocks the verdict. SECRET-001 still blocks, including a git URL
+credential on one line or split across lines.
 {% if guardian_scan_truncated | default(false) %}
 
 Scan input was truncated to {{ review_guardian_max_scan_chars }} characters before scanning.
 {% endif %}
 {% for f in guardian_findings %}
-{{ loop.index }}. **[{{ f.level | default('unknown') }}] {{ f.rule_id | default('unknown') }}**{{ ' 🔒 BLOCKING' if f.rule_id | default(None) in review_guardian_blocking_rule_ids else '' }}{{ ' — ' ~ f.file_path if f.file_path | default(None) else '' }}{{ ':' ~ f.line_number if f.line_number | default(None) else '' }}
+{{ loop.index }}. **[{{ f.level | default('unknown') }}] {{ f.rule_id | default('unknown') }}**{{ ' 🔒 BLOCKING' if f in guardian_blocking_findings else '' }}{{ ' — ' ~ f.file_path if f.file_path | default(None) else '' }}{{ ':' ~ f.line_number if f.line_number | default(None) else '' }}
    {{ f.message | default('(no message provided)') }}
 {% if f.snippet | default(None) %}
 {% set fence = evidence_fence(f.snippet) %}

@@ -3,8 +3,10 @@
 
 Dependabot has no Ansible Galaxy / collections-requirements.yml ecosystem, so
 `.github/dependabot.yml` cannot keep git SHA pins current. Floating
-`version: main` entries are left alone — those already track HEAD. Only
-`type: git` collections whose `version` is a hex SHA are bumped.
+`version: main` entries are left alone if any remain — those already
+track HEAD. Only `type: git` collections whose `version` is a hex SHA
+and whose GitHub owner is in BUMP_OWNERS (aknochow pins) are bumped.
+ansible-collections release SHAs stay on the tagged commit.
 
 Usage:
     python3 scripts/bump_collection_pins.py              # dry-run
@@ -38,6 +40,10 @@ SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 GITHUB_URL_RE = re.compile(
     r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$"
 )
+# Interface pins (aknochow.openai / aknochow.cursor) track default-branch
+# HEAD. Third-party release SHAs (ansible-collections/*) stay on the
+# tagged commit; floating those to main would silently upgrade runtime.
+BUMP_OWNERS = frozenset({"aknochow"})
 
 
 @dataclass(frozen=True)
@@ -84,7 +90,7 @@ def parse_git_sha_pins(text: str) -> list[GitShaPin]:
         version = current.get("version")
         if current.get("type") == "git" and isinstance(version, str) and SHA_RE.match(version):
             url_match = GITHUB_URL_RE.match(current["name"])
-            if url_match:
+            if url_match and url_match.group("owner") in BUMP_OWNERS:
                 pins.append(
                     GitShaPin(
                         name=current["name"],

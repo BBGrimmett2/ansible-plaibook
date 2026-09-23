@@ -84,10 +84,11 @@ def enrich_last_run(last_run: dict[str, Any], *, last_run_file: Path) -> dict[st
                 "commit",
                 "branch",
                 "date",
+                "guardian_scan",
             ):
                 if key in summary and key not in entry:
                     entry[key] = summary[key]
-                elif key in summary and key in ("scores", "findings_count", "findings"):
+                elif key in summary and key in ("scores", "findings_count", "findings", "guardian_scan"):
                     entry[key] = summary[key]
             if "score" not in entry and "score_overall" in summary:
                 entry["score"] = summary["score_overall"]
@@ -108,11 +109,12 @@ def dump_yaml(document: dict[str, Any], stream: TextIO) -> None:
 
 
 def format_pretty(document: dict[str, Any], *, full: bool = False) -> str:
-    """Human review: target, verdict, 0-100 scores, Critical/Major bodies.
+    """Human review: target, verdict, 0-100 scores, and every non-refuted finding.
 
-    Minor/nit stay as counts. Full findings.md is not dumped unless
-    ``full`` (``--full`` / ``-v``). SKIPPED (CI preflight) always prints
-    the reason and failing check names; the 0.0 score is omitted.
+    Full findings.md is not dumped unless ``full`` (``--full`` / ``-v``).
+    SKIPPED (CI preflight) always prints the reason and failing check
+    names; the 0.0 score is omitted. A guardian-forced NEEDS_CHANGES is
+    named on the default TTY so 100% plus that verdict is not silent.
     """
     lines: list[str] = []
     targets = document.get("targets") or []
@@ -137,6 +139,12 @@ def format_pretty(document: dict[str, Any], *, full: bool = False) -> str:
         if name:
             header = f"{header}  {name}"
         lines.append(header)
+        if document.get("exploration_incomplete"):
+            lines.append("  exploration incomplete (a search did not finish; that is not 'no matches')")
+
+        guardian_line = _guardian_block_line(document, target)
+        if guardian_line:
+            lines.append(guardian_line)
 
         cache_line = _cache_hit_line(document, target)
         if cache_line:
@@ -170,8 +178,6 @@ def format_pretty(document: dict[str, Any], *, full: bool = False) -> str:
             lines.append("  findings: " + ", ".join(bits))
 
         for finding in findings:
-            if str(finding.get("severity") or "").lower() not in ("critical", "major"):
-                continue
             if str(finding.get("evidence_status") or "").lower() == "refuted":
                 continue
             lines.extend(_format_point_finding(finding))
@@ -251,6 +257,30 @@ def _failing_check_names_from_report(report: str) -> list[str]:
             if name:
                 names.append(name)
     return names
+
+
+def _guardian_block_line(document: dict[str, Any], target: dict[str, Any]) -> str | None:
+    """Name an ai-guardian verdict override on the default TTY, not only in findings.md."""
+    scan = target.get("guardian_scan") if isinstance(target.get("guardian_scan"), dict) else {}
+    forced = bool(
+        document.get("guardian_forced_needs_changes")
+        or target.get("guardian_forced_needs_changes")
+        or scan.get("forced_needs_changes")
+    )
+    if not forced:
+        return None
+    raw_ids = (
+        document.get("guardian_blocking_rule_ids")
+        or target.get("guardian_blocking_rule_ids")
+        or scan.get("blocking_rule_ids")
+        or []
+    )
+    ids = [sanitize_display_line(item) for item in raw_ids if item]
+    label = ", ".join(ids) if ids else "SECRET-001"
+    return (
+        f"  blocked by ai-guardian ({label}): independent of lens scores; "
+        "see findings.md Security Scan"
+    )
 
 
 def _cache_hit_line(document: dict[str, Any], target: dict[str, Any]) -> str | None:

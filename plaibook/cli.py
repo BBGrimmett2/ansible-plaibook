@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -13,10 +14,12 @@ from plaibook.collections import CollectionInstallError, ensure_collections
 from plaibook.config import (
     FAMILIES,
     ConfigError,
+    load_vars,
     openshell_available,
     resolve_family,
     running_inside_openshell,
 )
+from plaibook.openshell_sdk import OpenshellSdkError, reexec_sandbox_runtime
 from plaibook.playbook import (
     PlaybookNotFoundError,
     PlaybookTimeoutError,
@@ -29,6 +32,7 @@ from plaibook.playbook import (
     runtime_tmp_dir,
 )
 from plaibook.progress import create_progress_file
+from plaibook.provider_sdk import ProviderSdkError, ensure_provider_sdk
 from plaibook.summary import (
     SummaryError,
     dump_json,
@@ -132,10 +136,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     mode.add_argument(
         "--commit",
         action="store_true",
-        help=(
-            "review_type=commit. Default when no PR/MR target is given "
-            "(reviews HEAD in the current directory)."
-        ),
+        help=("review_type=commit. Default when no PR/MR target is given (reviews HEAD in the current directory)."),
     )
     mode.add_argument(
         "--branch",
@@ -158,10 +159,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         "--verbose",
         action="count",
         default=0,
-        help=(
-            "Pass -v to ansible-playbook (task names). Repeat for more "
-            "(-vv / --debug shows module args)."
-        ),
+        help=("Pass -v to ansible-playbook (task names). Repeat for more (-vv / --debug shows module args)."),
     )
     review.add_argument(
         "--debug",
@@ -229,9 +227,9 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         default=None,
         help=(
             "Run PR/branch briefing in an OpenShell sandbox. Default is on for "
-            "pr/branch when the SDK is importable and this process is not "
-            "already inside OpenShell. Missing SDK fails closed unless "
-            "--no-sandbox."
+            "pr/branch when this process is not already inside OpenShell. "
+            "Python 3.10 switches to ~/.cache/ansible-plaibook/sandbox-runtime "
+            "(Python 3.11+). --no-sandbox stays on this interpreter."
         ),
     )
     review.add_argument(
@@ -292,8 +290,7 @@ def extra_vars_from_args(args: argparse.Namespace, run_id: str) -> dict:
         key, value = _parse_extra_var(item)
         if key == "last_run_id":
             raise ValueError(
-                "last_run_id is owned by the CLI; omit -e last_run_id= "
-                "(the wrapper already generates one)."
+                "last_run_id is owned by the CLI; omit -e last_run_id= (the wrapper already generates one)."
             )
         extras[key] = value
     return extras
@@ -332,6 +329,17 @@ def _validate_review_args(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _wants_sandbox(extras: dict) -> bool:
+    """True when this run will create an OpenShell sandbox."""
+    if extras.get("use_sandbox") is False:
+        return False
+    if running_inside_openshell() and extras.get("use_sandbox") is not True:
+        return False
+    if extras.get("use_sandbox") is True:
+        return True
+    return extras.get("review_type") != "commit"
+
+
 def _apply_sandbox_fallback(args: argparse.Namespace, extras: dict) -> str | None:
     """Fail closed when a PR/branch review cannot create the default sandbox."""
     if extras.get("review_type") == "commit" and "use_sandbox" not in extras:
@@ -339,9 +347,7 @@ def _apply_sandbox_fallback(args: argparse.Namespace, extras: dict) -> str | Non
     if extras.get("use_sandbox") is True and not openshell_available():
         return (
             "OpenShell SDK is not importable from "
-            f"{sys.executable}. Install it in this interpreter "
-            "(pip install 'openshell>=0.0.116,<0.0.120'), or pass --no-sandbox. "
-            "A copy in another venv does not count."
+            f"{sys.executable}. Pass --no-sandbox to review on this interpreter."
         )
     if "use_sandbox" in extras:
         return None
@@ -355,9 +361,8 @@ def _apply_sandbox_fallback(args: argparse.Namespace, extras: dict) -> str | Non
     return (
         "OpenShell SDK is not importable from "
         f"{sys.executable}. PR/branch reviews run untrusted checklist "
-        "commands and require a sandbox. Install OpenShell in this "
-        "interpreter (pip install 'openshell>=0.0.116,<0.0.120'), or pass "
-        "--no-sandbox to review on the host. A copy in another venv does not count."
+        "commands and require a sandbox. Pass --no-sandbox to review on "
+        "this interpreter."
     )
 
 
@@ -393,11 +398,7 @@ def cmd_review(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        root = (
-            Path(args.playbook_root).expanduser().resolve()
-            if args.playbook_root
-            else find_playbook_root()
-        )
+        root = Path(args.playbook_root).expanduser().resolve() if args.playbook_root else find_playbook_root()
         if args.playbook_root and not ((root / "review.yml").is_file() and (root / "ansible.cfg").is_file()):
             print(
                 f"--root {root} does not contain review.yml and ansible.cfg",
@@ -408,19 +409,24 @@ def cmd_review(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    try:
-        ensure_collections(root, stderr=sys.stderr)
-    except CollectionInstallError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-
     run_id = generate_run_id()
     try:
         extras = extra_vars_from_args(args, run_id)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    extras.setdefault("ansible_python_interpreter", sys.executable)
+    if _wants_sandbox(extras):
+        try:
+            reexec_sandbox_runtime(stderr=sys.stderr)
+        except OpenshellSdkError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
+    try:
+        ensure_collections(root, stderr=sys.stderr)
+    except CollectionInstallError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if getattr(args, "provider", None) or "agent_family" not in extras:
         try:
             resolve_family(
@@ -431,11 +437,19 @@ def cmd_review(args: argparse.Namespace) -> int:
         except (ValueError, ConfigError) as exc:
             print(str(exc), file=sys.stderr)
             return 2
+    family = extras.get("agent_family") or load_vars().get("agent_family")
+    if not family:
+        family = (os.environ.get("ANSIBLE_REVIEW_AGENT_FAMILY") or "").strip() or None
+    if family:
+        try:
+            ensure_provider_sdk(str(family), stderr=sys.stderr)
+        except ProviderSdkError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     sandbox_error = _apply_sandbox_fallback(args, extras)
     if sandbox_error:
         print(sandbox_error, file=sys.stderr)
         return 2
-    extras.setdefault("ansible_python_interpreter", sys.executable)
     try:
         command = build_ansible_command(
             extra_vars=extras,

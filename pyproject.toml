@@ -1,14 +1,17 @@
 [build-system]
+# Keep this parseable by Homebrew Python 3.10's setuptools (often 68.x
+# and used in-process when pip skips build isolation). SPDX
+# license = "Apache-2.0" is setuptools 77+ / PEP 639 only.
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "plaibook"
-version = "0.1.0"
+version = "0.1.25"
 description = "Ansible-native AI code-review and bug-fix pipeline"
 readme = "README.md"
-requires-python = ">=3.11"
-license = "Apache-2.0"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
 authors = [{ name = "Adam Knochowski", email = "aknochow@redhat.com" }]
 keywords = ["ansible", "code-review", "cli"]
 classifiers = [
@@ -16,13 +19,17 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
-    "ansible-core>=2.16.0,<2.20.0",
+    # 2.18/2.19 need 3.11. ansible-lint 26 forbids 2.17.*, so 3.10 stays
+    # on 2.16.19 (last 2.16 that satisfies that lint constraint).
+    "ansible-core>=2.16.19,<2.17.0; python_version < '3.11'",
+    "ansible-core>=2.16.0,<2.20.0; python_version >= '3.11'",
     "pyyaml>=6.0.0",
     "jinja2>=3.1.0",
     "cursor-sdk>=1.0.31,<2.0.0",
@@ -55,7 +62,7 @@ cursor = [
 include = ["plaibook*"]
 
 [tool.setuptools.package-data]
-plaibook = ["share/**/*"]
+plaibook = ["share/**/*", "hashed/**/*"]
 
 [tool.setuptools.cmdclass]
 build_py = "plaibook._setup_share.build_py"
@@ -70,7 +77,7 @@ norecursedirs = [".*", "build", "dist", "node_modules", ".venv", "venv", "*.egg"
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
