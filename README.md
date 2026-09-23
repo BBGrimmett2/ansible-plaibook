@@ -247,6 +247,14 @@ podman push <your-registry>/plaibook-ee:latest
 Credentials (GitHub/GitLab tokens, OpenShell mTLS) are injected via
 AAP credentials at job-run time, never baked into the image.
 
+Vertex/Gemini job templates do not need `aknochow.cursor` in the EE.
+`review.yml` loads that collection only when `agent_family=cursor`
+actually starts the sidecar. Rebuild the EE when you change
+`build/collections/*.tar.gz` or `execution-environment.yml`; a
+Vertex-only parse failure is a playbook bug, not a missing Cursor
+tarball.
+
+
 ## Verified so far
 
 - ✅ Full pipeline against a real local diff, unsandboxed, and
