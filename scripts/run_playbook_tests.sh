@@ -68,4 +68,13 @@ done
 echo "--- Running tests/run_cursor_sidecar_skip.sh ---"
 bash "${REPO_ROOT}/tests/run_cursor_sidecar_skip.sh"
 
+echo "--- Syntax-check review.yml without optional collections ---"
+# AAP Vertex EEs do not ship aknochow.cursor. Play-level FQCNs would
+# fail at parse; this empty COLLECTIONS_PATH is that environment.
+empty_collections="$(mktemp -d)"
+ANSIBLE_COLLECTIONS_PATH="${empty_collections}" ANSIBLE_CALLBACKS_ENABLED="" \
+  ansible-playbook "${REPO_ROOT}/review.yml" --syntax-check \
+  -e agent_family=gemini -e use_sandbox=false
+rmdir "${empty_collections}"
+
 echo "All ${#PLAYBOOKS[@]} playbook tests plus sidecar skip scenarios passed successfully."

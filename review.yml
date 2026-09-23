@@ -301,6 +301,9 @@
     # already set (URL+token or URL_FILE+TOKEN_FILE), or when this is
     # not a Cursor-agent session (iTerm/CI/AAP keep in-process
     # launch_bridge). Never set_fact the token.
+    # include_tasks, not a play-level FQCN: Ansible resolves
+    # aknochow.cursor.bridge at parse time, so a Vertex-only AAP EE
+    # without that collection never reaches when:.
     - name: Decide whether to start a playbook-owned cursor-sdk-bridge sidecar
       ansible.builtin.set_fact:
         review_cursor_sidecar_wanted: >-
@@ -324,20 +327,7 @@
 
     - name: Start a playbook-owned cursor-sdk-bridge sidecar
       when: review_cursor_sidecar_wanted | bool
-      aknochow.cursor.bridge:
-        state: present
-        rundir: "{{ review_cursor_bridge_rundir }}"
-        timeout: "{{ review_cursor_bridge_timeout }}"
-      register: _cursor_sidecar
-
-    - name: Record sidecar attach file paths without loading the token
-      when:
-        - review_cursor_sidecar_wanted | bool
-        - _cursor_sidecar is succeeded
-      ansible.builtin.set_fact:
-        review_cursor_sidecar_started: true
-        review_cursor_bridge_url_file: "{{ _cursor_sidecar.url_file }}"
-        review_cursor_bridge_token_file: "{{ _cursor_sidecar.token_file }}"
+      ansible.builtin.include_tasks: roles/review/tasks/cursor_sidecar_start.yml
 
     # block/rescue/always so a failure anywhere in the pipeline (a bad
     # target, a broken script, an SSH hiccup, a review-engine agent-call
@@ -401,9 +391,7 @@
           when: review_cursor_sidecar_started | default(false) | bool
           block:
             - name: Stop the playbook-owned cursor-sdk-bridge sidecar
-              aknochow.cursor.bridge:
-                state: absent
-                rundir: "{{ review_cursor_bridge_rundir }}"
+              ansible.builtin.include_tasks: roles/review/tasks/cursor_sidecar_stop.yml
           rescue:
             - name: Warn that cursor sidecar stop itself failed
               ansible.builtin.debug:
