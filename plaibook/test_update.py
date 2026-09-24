@@ -16,6 +16,7 @@ from plaibook.update import (
     _validate_github_ref,
     current_version,
     fetch_pypi_latest_version,
+    pip_install_git_ref,
     prompt_confirm,
     update_cache_dir,
     update_lock_path,
@@ -288,3 +289,56 @@ def test_verify_installation_import_error(monkeypatch):
 
     from plaibook.update import verify_installation
     assert verify_installation() is False
+
+
+def test_pip_install_git_ref_constructs_correct_url(monkeypatch):
+    """Test pip_install_git_ref builds the correct git+https URL."""
+    ref = "main"
+    captured_argv = []
+
+    def mock_run(argv, **kwargs):
+        captured_argv.append(argv)
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = ""
+        result.stderr = ""
+        return result
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    pip_install_git_ref(ref)
+
+    assert len(captured_argv) == 1
+    argv = captured_argv[0]
+    assert "pip" in argv
+    assert "install" in argv
+    assert "--force-reinstall" in argv
+    assert "--no-cache-dir" in argv
+    assert "git+https://github.com/aknochow/ansible-plaibook.git@main" in argv
+
+
+def test_pip_install_git_ref_validates_ref(monkeypatch):
+    """Test pip_install_git_ref validates the ref."""
+    def mock_run(argv, **kwargs):
+        result = MagicMock()
+        result.returncode = 0
+        return result
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    # Should reject path traversal
+    with pytest.raises(UpdateError, match="path traversal"):
+        pip_install_git_ref("../evil")
+
+
+def test_pip_install_git_ref_handles_subprocess_error(monkeypatch):
+    """Test pip_install_git_ref handles subprocess errors."""
+    import subprocess
+
+    def mock_run(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, timeout=600)
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    with pytest.raises(UpdateError, match="timed out"):
+        pip_install_git_ref("main")
