@@ -47,13 +47,12 @@ from plaibook.update import (
     UpdateError,
     VersionError,
     current_version,
-    download_github_tarball,
     download_pypi_wheel,
     fetch_pypi_latest_version,
     pip_install_from_path,
+    pip_install_git_ref,
     prompt_confirm,
     update_cache_dir,
-    validate_pyproject_is_plaibook,
     verify_installation,
 )
 from plaibook.wait import WaitSpinner, spinner_enabled
@@ -595,26 +594,22 @@ def cmd_update(args: argparse.Namespace) -> int:
             print(f"Update available: {current} → {latest}", file=sys.stderr)
             return 0
 
-    # GitHub branch install
+    # GitHub branch install (issue #61: use git+https, not tarball)
     if args.branch:
         try:
-            cache_dir = update_cache_dir()
-            print(f"Downloading from GitHub ref: {args.branch}", file=sys.stderr)
+            if not args.yes:
+                if not prompt_confirm(
+                    f"Install plaibook from git ref '{args.branch}'?"
+                ):
+                    print("Update cancelled.", file=sys.stderr)
+                    return 1
+
+            print(f"Installing plaibook from git ref: {args.branch}", file=sys.stderr)
+            print("(pip will clone from git+https://github.com/aknochow/ansible-plaibook.git)", file=sys.stderr)
 
             from plaibook.update import _exclusive_update_lock
             with _exclusive_update_lock():
-                extracted_dir = download_github_tarball(args.branch, cache_dir)
-                version = validate_pyproject_is_plaibook(extracted_dir)
-
-                if not args.yes:
-                    if not prompt_confirm(
-                        f"Install plaibook from branch '{args.branch}' (version {version})?"
-                    ):
-                        print("Update cancelled.", file=sys.stderr)
-                        return 1
-
-                print(f"Installing plaibook from {extracted_dir}...", file=sys.stderr)
-                result = pip_install_from_path(extracted_dir, stderr=sys.stderr)
+                result = pip_install_git_ref(args.branch, stderr=sys.stderr)
 
                 if result.returncode != 0:
                     print("pip install failed:", file=sys.stderr)
@@ -623,18 +618,27 @@ def cmd_update(args: argparse.Namespace) -> int:
                         print(stderr_tail, file=sys.stderr)
                     return 2
 
-                if not verify_installation(version):
+                if not verify_installation():
                     print(
-                        f"Installation completed but version verification failed. "
-                        f"Expected {version}, please check installation.",
+                        "Installation completed but version verification failed. "
+                        "Please check installation.",
                         file=sys.stderr,
                     )
                     return 2
 
-                print(
-                    f"Successfully installed plaibook from '{args.branch}' (version {version})",
-                    file=sys.stderr,
-                )
+                # Get the installed version for success message
+                try:
+                    from importlib.metadata import version
+                    installed_version = version("plaibook")
+                    print(
+                        f"Successfully installed plaibook from '{args.branch}' (version {installed_version})",
+                        file=sys.stderr,
+                    )
+                except Exception:
+                    print(
+                        f"Successfully installed plaibook from '{args.branch}'",
+                        file=sys.stderr,
+                    )
                 return 0
 
         except (UpdateError, NetworkError, VersionError) as exc:

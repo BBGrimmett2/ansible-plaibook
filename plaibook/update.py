@@ -348,6 +348,53 @@ def pip_install_from_path(
         ) from exc
 
 
+def pip_install_git_ref(
+    ref: str,
+    python: str | None = None,
+    *,
+    stderr: TextIO | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run pip install --force-reinstall --no-cache-dir from git+https URL.
+
+    This is the approach from issue #61 that works in operator sandbox where
+    GitHub archive URLs return 403. pip clones into /tmp, which is acceptable
+    in that context.
+
+    Pattern from provider_sdk.py:_run.
+    """
+    ref = _validate_github_ref(ref)
+    python_exe = python or sys.executable
+    git_url = f"git+https://github.com/{GITHUB_REPO}.git@{ref}"
+
+    # Security: validate no credentials in URL
+    if "@" in git_url.split("@")[0]:  # @ before the ref separator
+        raise UpdateError("git URL must not contain embedded credentials")
+
+    argv = [
+        python_exe,
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--force-reinstall",
+        "--no-cache-dir",
+        git_url,
+    ]
+
+    try:
+        return subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=DOWNLOAD_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise UpdateError(
+            f"pip install timed out after {DOWNLOAD_TIMEOUT_SECONDS}s"
+        ) from exc
+
+
 def verify_installation(expected_version: str | None = None) -> bool:
     """Check that importlib.metadata.version('plaibook') matches expected.
 
