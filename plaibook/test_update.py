@@ -9,6 +9,7 @@ from urllib.error import URLError
 
 import pytest
 
+from plaibook.cli import cmd_update
 from plaibook.update import (
     NetworkError,
     UpdateError,
@@ -17,6 +18,8 @@ from plaibook.update import (
     current_version,
     fetch_pypi_latest_version,
     pip_install_git_ref,
+    pipx_install_git_ref,
+    pipx_upgrade_plaibook,
     prompt_confirm,
     update_cache_dir,
     update_lock_path,
@@ -342,3 +345,150 @@ def test_pip_install_git_ref_handles_subprocess_error(monkeypatch):
 
     with pytest.raises(UpdateError, match="timed out"):
         pip_install_git_ref("main")
+
+
+def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> MagicMock:
+    result = MagicMock()
+    result.returncode = returncode
+    result.stdout = stdout
+    result.stderr = stderr
+    return result
+
+
+def test_pipx_upgrade_argv(monkeypatch):
+    """Default upgrade is `pipx upgrade plaibook`."""
+    captured = []
+
+    def mock_which(name):
+        return "/usr/bin/pipx" if name == "pipx" else None
+
+    def mock_run(argv, **kwargs):
+        captured.append(argv)
+        return _completed()
+
+    monkeypatch.setattr("plaibook.update.shutil.which", mock_which)
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    pipx_upgrade_plaibook()
+
+    assert captured == [["/usr/bin/pipx", "upgrade", "plaibook"]]
+
+
+def test_pipx_install_git_ref_argv(monkeypatch):
+    """--branch installs that ref with pipx, which has no --branch flag."""
+    captured = []
+
+    def mock_which(name):
+        return "/usr/bin/pipx" if name == "pipx" else None
+
+    def mock_run(argv, **kwargs):
+        captured.append(argv)
+        return _completed()
+
+    monkeypatch.setattr("plaibook.update.shutil.which", mock_which)
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    pipx_install_git_ref("v0.1.26")
+
+    assert captured == [[
+        "/usr/bin/pipx",
+        "install",
+        "--force",
+        "git+https://github.com/aknochow/ansible-plaibook.git@v0.1.26",
+    ]]
+
+
+def test_pipx_install_git_ref_rejects_traversal(monkeypatch):
+    """A bad ref never reaches pipx."""
+    monkeypatch.setattr("plaibook.update.shutil.which", lambda name: "/usr/bin/pipx")
+
+    with pytest.raises(UpdateError, match="path traversal"):
+        pipx_install_git_ref("../evil")
+
+
+def test_pipx_missing(monkeypatch):
+    """Both install paths fail closed when pipx is not installed."""
+    monkeypatch.setattr("plaibook.update.shutil.which", lambda name: None)
+
+    with pytest.raises(UpdateError, match="pipx is not on PATH"):
+        pipx_upgrade_plaibook()
+    with pytest.raises(UpdateError, match="pipx is not on PATH"):
+        pipx_install_git_ref("main")
+
+
+def test_cmd_update_check_does_not_call_pipx(monkeypatch, capsys):
+    """--check compares versions and does not upgrade."""
+    monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.27")
+    monkeypatch.setattr(
+        "plaibook.cli.pipx_upgrade_plaibook",
+        lambda: (_ for _ in ()).throw(AssertionError("pipx should not run")),
+    )
+
+    code = cmd_update(argparse_namespace(check=True, branch=None, yes=False))
+
+    assert code == 0
+    err = capsys.readouterr().err
+    assert "0.1.26" in err
+    assert "0.1.27" in err
+
+
+def test_cmd_update_default_calls_pipx_upgrade(monkeypatch):
+    """The default path upgrades the pipx install after the version check."""
+    calls = []
+    monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.27")
+    monkeypatch.setattr("plaibook.cli.prompt_confirm", lambda message, default=True: True)
+    monkeypatch.setattr("plaibook.update._exclusive_update_lock", _null_lock)
+    monkeypatch.setattr(
+        "plaibook.cli.pipx_upgrade_plaibook",
+        lambda: calls.append("upgrade") or _completed(stdout="upgraded"),
+    )
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
+
+    assert code == 0
+    assert calls == ["upgrade"]
+
+
+def test_cmd_update_branch_calls_pipx_install(monkeypatch):
+    """--branch records a new git spec via pipx install --force."""
+    calls = []
+    monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.prompt_confirm", lambda message, default=True: True)
+    monkeypatch.setattr("plaibook.update._exclusive_update_lock", _null_lock)
+    monkeypatch.setattr(
+        "plaibook.cli.pipx_install_git_ref",
+        lambda ref: calls.append(ref) or _completed(),
+    )
+
+    code = cmd_update(argparse_namespace(check=False, branch="main", yes=True))
+
+    assert code == 0
+    assert calls == ["main"]
+
+
+def test_cmd_update_already_current_skips_pipx(monkeypatch):
+    """A matching PyPI version does not call pipx."""
+    monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
+    monkeypatch.setattr(
+        "plaibook.cli.pipx_upgrade_plaibook",
+        lambda: (_ for _ in ()).throw(AssertionError("pipx should not run")),
+    )
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
+
+    assert code == 0
+
+
+def argparse_namespace(**kwargs):
+    from argparse import Namespace
+
+    return Namespace(**kwargs)
+
+
+def _null_lock(home=None):
+    from contextlib import nullcontext
+
+    return nullcontext()

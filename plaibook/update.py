@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Update plaibook from PyPI or GitHub without pip's git clone into /tmp."""
+"""Update the pipx-managed plaibook install from PyPI or a GitHub ref."""
 
 from __future__ import annotations
 
@@ -393,6 +393,52 @@ def pip_install_git_ref(
         raise UpdateError(
             f"pip install timed out after {DOWNLOAD_TIMEOUT_SECONDS}s"
         ) from exc
+
+
+def pipx_executable() -> str:
+    """Return the pipx binary, or raise if this machine cannot upgrade a pipx install."""
+    found = shutil.which("pipx")
+    if not found:
+        raise UpdateError(
+            "pipx is not on PATH. Install plaibook with `pipx install plaibook`, then run plai update."
+        )
+    return found
+
+
+def _run_pipx(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run a pipx command and capture its output."""
+    try:
+        return subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=DOWNLOAD_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise UpdateError(f"pipx timed out after {DOWNLOAD_TIMEOUT_SECONDS}s") from exc
+
+
+def pipx_upgrade_plaibook() -> subprocess.CompletedProcess[str]:
+    """Upgrade plaibook from the source pipx already recorded for it.
+
+    ``pipx upgrade`` takes a package name. It does not accept a new git ref.
+    """
+    return _run_pipx([pipx_executable(), "upgrade", "plaibook"])
+
+
+def pipx_install_git_ref(ref: str) -> subprocess.CompletedProcess[str]:
+    """Install a GitHub ref into the pipx environment, replacing any existing plaibook.
+
+    ``pipx upgrade`` cannot switch sources. ``pipx install --force`` records
+    this spec so a later ``plai update`` upgrades that same ref.
+    """
+    ref = _validate_github_ref(ref)
+    git_url = f"git+https://github.com/{GITHUB_REPO}.git@{ref}"
+    # Reject user:token@host before the ref separator.
+    if "@" in git_url.split("@")[0]:
+        raise UpdateError("git URL must not contain embedded credentials")
+    return _run_pipx([pipx_executable(), "install", "--force", git_url])
 
 
 def verify_installation(expected_version: str | None = None) -> bool:
