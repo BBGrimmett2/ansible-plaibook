@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -52,13 +53,10 @@ from plaibook.update import (
     UpdateError,
     VersionError,
     current_version,
-    download_pypi_wheel,
     fetch_pypi_latest_version,
-    pip_install_from_path,
-    pip_install_git_ref,
+    pipx_install_git_ref,
+    pipx_upgrade_plaibook,
     prompt_confirm,
-    update_cache_dir,
-    verify_installation,
 )
 from plaibook.wait import WaitSpinner, spinner_enabled
 
@@ -272,13 +270,18 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
 
     update = sub.add_parser(
         "update",
-        help="Update plaibook to the latest version (or specific branch).",
-        description="Reinstall plaibook from PyPI or a GitHub branch/ref without relying on pip's git clone into /tmp.",
+        help="Upgrade the pipx install of plaibook (or install a GitHub ref).",
+        description=(
+            "Upgrade the pipx-managed plaibook install. "
+            "With no flags this runs `pipx upgrade plaibook`. "
+            "--branch installs that git ref with `pipx install --force`. "
+            "--check compares versions and does not run pipx."
+        ),
     )
     update.add_argument(
         "--branch",
         metavar="REF",
-        help="Install from a GitHub ref (branch, tag, or commit SHA) instead of PyPI.",
+        help="Install this GitHub ref with pipx (branch, tag, or commit SHA) instead of upgrading PyPI.",
     )
     update.add_argument(
         "--check",
@@ -671,8 +674,23 @@ def cmd_review(args: argparse.Namespace) -> int:
     return result.returncode
 
 
+def _print_pipx_output(result: subprocess.CompletedProcess[str]) -> None:
+    text = (result.stdout or "").strip()
+    if text:
+        print(text, file=sys.stderr)
+
+
+def _pipx_failed(result: subprocess.CompletedProcess[str]) -> int:
+    print("pipx failed:", file=sys.stderr)
+    for stream in (result.stderr, result.stdout):
+        tail = (stream or "")[-2000:].strip()
+        if tail:
+            print(tail, file=sys.stderr)
+    return 2
+
+
 def cmd_update(args: argparse.Namespace) -> int:
-    """Handle the update command for PyPI and GitHub branch installs."""
+    """Upgrade the pipx install, or install a GitHub ref into pipx."""
     current = current_version()
 
     # Check mode: just report available version
@@ -711,40 +729,21 @@ def cmd_update(args: argparse.Namespace) -> int:
                     return 1
 
             print(f"Installing plaibook from git ref: {args.branch}", file=sys.stderr)
-            print("(pip will clone from git+https://github.com/aknochow/ansible-plaibook.git)", file=sys.stderr)
+            print(
+                "(pipx install --force git+https://github.com/aknochow/ansible-plaibook.git)",
+                file=sys.stderr,
+            )
 
             from plaibook.update import _exclusive_update_lock
             with _exclusive_update_lock():
-                result = pip_install_git_ref(args.branch, stderr=sys.stderr)
-
+                result = pipx_install_git_ref(args.branch)
                 if result.returncode != 0:
-                    print("pip install failed:", file=sys.stderr)
-                    stderr_tail = result.stderr[-2000:] if result.stderr else ""
-                    if stderr_tail:
-                        print(stderr_tail, file=sys.stderr)
-                    return 2
-
-                if not verify_installation():
-                    print(
-                        "Installation completed but version verification failed. "
-                        "Please check installation.",
-                        file=sys.stderr,
-                    )
-                    return 2
-
-                # Get the installed version for success message
-                try:
-                    from importlib.metadata import version
-                    installed_version = version("plaibook")
-                    print(
-                        f"Successfully installed plaibook from '{args.branch}' (version {installed_version})",
-                        file=sys.stderr,
-                    )
-                except Exception:
-                    print(
-                        f"Successfully installed plaibook from '{args.branch}'",
-                        file=sys.stderr,
-                    )
+                    return _pipx_failed(result)
+                _print_pipx_output(result)
+                print(
+                    f"Successfully installed plaibook from '{args.branch}' with pipx",
+                    file=sys.stderr,
+                )
                 return 0
 
         except (UpdateError, NetworkError, VersionError) as exc:
@@ -767,7 +766,6 @@ def cmd_update(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        cache_dir = update_cache_dir()
         print(f"Update available: {current} → {latest}", file=sys.stderr)
 
         from plaibook.update import _exclusive_update_lock
@@ -777,27 +775,11 @@ def cmd_update(args: argparse.Namespace) -> int:
                     print("Update cancelled.", file=sys.stderr)
                     return 1
 
-            print(f"Downloading plaibook {latest} from PyPI...", file=sys.stderr)
-            wheel_path = download_pypi_wheel(latest, cache_dir)
-
-            print(f"Installing plaibook {latest}...", file=sys.stderr)
-            result = pip_install_from_path(wheel_path, stderr=sys.stderr)
-
+            print("Upgrading plaibook with pipx...", file=sys.stderr)
+            result = pipx_upgrade_plaibook()
             if result.returncode != 0:
-                print("pip install failed:", file=sys.stderr)
-                stderr_tail = result.stderr[-2000:] if result.stderr else ""
-                if stderr_tail:
-                    print(stderr_tail, file=sys.stderr)
-                return 2
-
-            if not verify_installation(latest):
-                print(
-                    f"Installation completed but version verification failed. "
-                    f"Expected {latest}, please check installation.",
-                    file=sys.stderr,
-                )
-                return 2
-
+                return _pipx_failed(result)
+            _print_pipx_output(result)
             print(f"Successfully updated plaibook to {latest}", file=sys.stderr)
             return 0
 
