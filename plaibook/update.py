@@ -177,47 +177,53 @@ def pipx_installed_version() -> str | None:
     return None
 
 
+def _unreadable_pipx_spec(reason: str) -> UpdateError:
+    """An unreadable list is not evidence that the install came from PyPI."""
+    return UpdateError(
+        "Could not read plaibook's pipx spec "
+        f"({reason}), so this command will not treat the install as a PyPI release."
+    )
+
+
 def pipx_package_spec() -> str | None:
     """Return the spec pipx recorded for plaibook.
 
     A PyPI install is ``plaibook``. ``plai update --branch`` records a git
-    URL. None means pipx is absent or has no plaibook venv.
+    URL. None means pipx is not installed, or its list has no plaibook venv.
+
+    Raises UpdateError when pipx is installed but the list cannot be read.
     """
     if shutil.which("pipx") is None:
         return None
     result = _run_pipx([pipx_executable(), "list", "--json"])
     if result.returncode != 0 or not (result.stdout or "").strip():
-        return None
+        raise _unreadable_pipx_spec("pipx list --json failed")
     try:
         payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return None
+    except json.JSONDecodeError as exc:
+        raise _unreadable_pipx_spec("pipx list --json was not JSON") from exc
     venvs = payload.get("venvs") if isinstance(payload, dict) else None
-    entry = venvs.get("plaibook") if isinstance(venvs, dict) else None
+    if not isinstance(venvs, dict):
+        raise _unreadable_pipx_spec("pipx list --json has no venvs object")
+    if "plaibook" not in venvs:
+        return None
+    entry = venvs.get("plaibook")
     metadata = entry.get("metadata") if isinstance(entry, dict) else None
     main = metadata.get("main_package") if isinstance(metadata, dict) else None
     spec = main.get("package_or_url") if isinstance(main, dict) else None
-    if not isinstance(spec, str):
-        return None
-    spec = spec.strip()
-    return spec or None
+    if not isinstance(spec, str) or not spec.strip():
+        raise _unreadable_pipx_spec("plaibook's package_or_url is missing")
+    return spec.strip()
 
 
 def pipx_spec_is_pypi(spec: str | None) -> bool:
-    """True when there is no recorded git spec to replace."""
+    """True when pipx recorded a PyPI name, or recorded no plaibook venv.
+
+    None is only the no-venv result. An unreadable list raises instead.
+    """
     if spec is None:
         return True
     return spec == "plaibook" or spec.startswith("plaibook==")
-
-
-def pipx_upgrade_plaibook() -> subprocess.CompletedProcess[str]:
-    """Upgrade plaibook from the source pipx already recorded for it.
-
-    ``pipx upgrade`` takes a package name. It does not accept a new git ref.
-    The default ``plai update`` path does not call this. It installs a PyPI
-    version so a previous ``--branch`` does not stick.
-    """
-    return _run_pipx([pipx_executable(), "upgrade", "plaibook"])
 
 
 def pipx_install_git_ref(ref: str) -> subprocess.CompletedProcess[str]:
@@ -240,21 +246,6 @@ def pipx_install_git_ref(ref: str) -> subprocess.CompletedProcess[str]:
         "--pip-args=--no-cache-dir",
         git_url,
     ])
-
-
-def verify_installation(expected_version: str | None = None) -> bool:
-    """Check that importlib.metadata.version('plaibook') matches expected.
-
-    Returns True if verification passes, False otherwise.
-    """
-    try:
-        from importlib.metadata import version
-        installed = version("plaibook")
-        if expected_version and installed != expected_version:
-            return False
-        return True
-    except Exception:
-        return False
 
 
 def prompt_confirm(message: str, default: bool = True) -> bool:

@@ -21,7 +21,6 @@ from plaibook.update import (
     pipx_installed_version,
     pipx_package_spec,
     pipx_spec_is_pypi,
-    pipx_upgrade_plaibook,
     prompt_confirm,
     update_lock_path,
 )
@@ -189,76 +188,12 @@ def test_prompt_confirm_keyboard_interrupt(monkeypatch):
     assert prompt_confirm("Test?") is False
 
 
-def test_verify_installation_no_expected_version(monkeypatch):
-    """Test verify_installation without expected version."""
-    def mock_version(package):
-        return "0.1.27"
-
-    monkeypatch.setattr("importlib.metadata.version", mock_version)
-
-    # Import after monkeypatch
-    from plaibook.update import verify_installation
-    assert verify_installation() is True
-
-
-def test_verify_installation_matching_version(monkeypatch):
-    """Test verify_installation with matching version."""
-    def mock_version(package):
-        return "0.1.27"
-
-    monkeypatch.setattr("importlib.metadata.version", mock_version)
-
-    from plaibook.update import verify_installation
-    assert verify_installation("0.1.27") is True
-
-
-def test_verify_installation_mismatched_version(monkeypatch):
-    """Test verify_installation with mismatched version."""
-    def mock_version(package):
-        return "0.1.26"
-
-    monkeypatch.setattr("importlib.metadata.version", mock_version)
-
-    from plaibook.update import verify_installation
-    assert verify_installation("0.1.27") is False
-
-
-def test_verify_installation_import_error(monkeypatch):
-    """Test verify_installation handles import errors."""
-    def mock_version(package):
-        raise ImportError("Package not found")
-
-    monkeypatch.setattr("importlib.metadata.version", mock_version)
-
-    from plaibook.update import verify_installation
-    assert verify_installation() is False
-
-
 def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> MagicMock:
     result = MagicMock()
     result.returncode = returncode
     result.stdout = stdout
     result.stderr = stderr
     return result
-
-
-def test_pipx_upgrade_argv(monkeypatch):
-    """pipx upgrade follows the spec pipx already recorded."""
-    captured = []
-
-    def mock_which(name):
-        return "/usr/bin/pipx" if name == "pipx" else None
-
-    def mock_run(argv, **kwargs):
-        captured.append(argv)
-        return _completed()
-
-    monkeypatch.setattr("plaibook.update.shutil.which", mock_which)
-    monkeypatch.setattr("subprocess.run", mock_run)
-
-    pipx_upgrade_plaibook()
-
-    assert captured == [["/usr/bin/pipx", "upgrade", "plaibook"]]
 
 
 def test_pipx_install_git_ref_argv(monkeypatch):
@@ -356,6 +291,36 @@ def test_pipx_package_spec_reads_a_git_url(monkeypatch):
     assert pipx_spec_is_pypi(None) is True
 
 
+def test_pipx_package_spec_missing_venv_is_not_a_git_install(monkeypatch):
+    """A successful list with no plaibook venv is not a git spec."""
+    monkeypatch.setattr("plaibook.update.shutil.which", lambda name: "/usr/bin/pipx")
+
+    def mock_run(argv, **kwargs):
+        return _completed(stdout='{"venvs": {}}')
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+    assert pipx_package_spec() is None
+
+
+def test_pipx_package_spec_rejects_an_unreadable_list(monkeypatch):
+    """A failed or malformed list is not treated as a PyPI install."""
+    monkeypatch.setattr("plaibook.update.shutil.which", lambda name: "/usr/bin/pipx")
+
+    def failed(argv, **kwargs):
+        return _completed(returncode=1, stderr="pipx failed")
+
+    monkeypatch.setattr("subprocess.run", failed)
+    with pytest.raises(UpdateError, match="will not treat the install as a PyPI release"):
+        pipx_package_spec()
+
+    def malformed(argv, **kwargs):
+        return _completed(stdout="not-json")
+
+    monkeypatch.setattr("subprocess.run", malformed)
+    with pytest.raises(UpdateError, match="not JSON"):
+        pipx_package_spec()
+
+
 def test_pipx_installed_version_reads_show(monkeypatch):
     """The installed version comes from the pipx venv, not this process."""
     monkeypatch.setattr("plaibook.update.shutil.which", lambda name: "/usr/bin/pipx")
@@ -372,8 +337,6 @@ def test_pipx_missing(monkeypatch):
     """Install paths fail closed when pipx is not installed."""
     monkeypatch.setattr("plaibook.update.shutil.which", lambda name: None)
 
-    with pytest.raises(UpdateError, match="pipx is not on PATH"):
-        pipx_upgrade_plaibook()
     with pytest.raises(UpdateError, match="pipx is not on PATH"):
         pipx_install_git_ref("main")
     with pytest.raises(UpdateError, match="pipx is not on PATH"):
@@ -480,6 +443,31 @@ def test_cmd_update_already_current_skips_pipx(monkeypatch):
     code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
 
     assert code == 0
+
+
+def test_cmd_update_refuses_to_skip_when_the_pipx_spec_cannot_be_read(monkeypatch, capsys):
+    """A matching version is not 'up to date' when pipx's spec is unreadable."""
+    monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
+
+    def unreadable():
+        raise UpdateError(
+            "Could not read plaibook's pipx spec (pipx list --json failed), "
+            "so this command will not treat the install as a PyPI release."
+        )
+
+    monkeypatch.setattr("plaibook.cli.pipx_package_spec", unreadable)
+    monkeypatch.setattr(
+        "plaibook.cli.pipx_install_pypi",
+        lambda version: (_ for _ in ()).throw(AssertionError("pipx should not run")),
+    )
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "already up to date" not in err
+    assert "will not treat the install as a PyPI release" in err
 
 
 def test_cmd_update_replaces_a_git_spec_at_the_same_version(monkeypatch, capsys):
