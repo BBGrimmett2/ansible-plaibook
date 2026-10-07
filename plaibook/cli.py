@@ -57,6 +57,8 @@ from plaibook.update import (
     pipx_install_git_ref,
     pipx_install_pypi,
     pipx_installed_version,
+    pipx_package_spec,
+    pipx_spec_is_pypi,
     prompt_confirm,
 )
 from plaibook.wait import WaitSpinner, spinner_enabled
@@ -773,13 +775,22 @@ def cmd_update(args: argparse.Namespace) -> int:
         )
         return 2
 
-    if current == latest:
-        print(f"plaibook is already up to date ({current}).", file=sys.stderr)
-        return 0
-
     try:
-        print(f"Update available: {current} → {latest}", file=sys.stderr)
-        if not _confirmed(args, f"Update plaibook from {current} to {latest}?"):
+        replace_git = current == latest and not pipx_spec_is_pypi(pipx_package_spec())
+        if current == latest and not replace_git:
+            print(f"plaibook is already up to date ({current}).", file=sys.stderr)
+            return 0
+        if replace_git:
+            print(
+                f"plaibook {current} is installed from a git ref. "
+                f"Reinstalling {latest} from PyPI.",
+                file=sys.stderr,
+            )
+            prompt = f"Replace the git install of plaibook {current} with the PyPI release?"
+        else:
+            print(f"Update available: {current} → {latest}", file=sys.stderr)
+            prompt = f"Update plaibook from {current} to {latest}?"
+        if not _confirmed(args, prompt):
             print("Update cancelled.", file=sys.stderr)
             return 1
 

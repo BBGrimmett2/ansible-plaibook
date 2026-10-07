@@ -19,6 +19,8 @@ from plaibook.update import (
     pipx_install_git_ref,
     pipx_install_pypi,
     pipx_installed_version,
+    pipx_package_spec,
+    pipx_spec_is_pypi,
     pipx_upgrade_plaibook,
     prompt_confirm,
     update_lock_path,
@@ -325,6 +327,35 @@ def test_pipx_install_pypi_rejects_bad_version():
         pipx_install_pypi("plaibook==0.1.27")
 
 
+def test_pipx_package_spec_reads_a_git_url(monkeypatch):
+    """pipx list --json is the recorded source, not this process."""
+    payload = {
+        "venvs": {
+            "plaibook": {
+                "metadata": {
+                    "main_package": {
+                        "package": "plaibook",
+                        "package_or_url": "git+https://github.com/aknochow/ansible-plaibook.git@main",
+                    }
+                }
+            }
+        }
+    }
+    monkeypatch.setattr("plaibook.update.shutil.which", lambda name: "/usr/bin/pipx")
+
+    def mock_run(argv, **kwargs):
+        assert argv == ["/usr/bin/pipx", "list", "--json"]
+        return _completed(stdout=json.dumps(payload))
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+    spec = pipx_package_spec()
+    assert spec is not None
+    assert pipx_spec_is_pypi(spec) is False
+    assert pipx_spec_is_pypi("plaibook") is True
+    assert pipx_spec_is_pypi("plaibook==0.1.26") is True
+    assert pipx_spec_is_pypi(None) is True
+
+
 def test_pipx_installed_version_reads_show(monkeypatch):
     """The installed version comes from the pipx venv, not this process."""
     monkeypatch.setattr("plaibook.update.shutil.which", lambda name: "/usr/bin/pipx")
@@ -437,9 +468,10 @@ def test_cmd_update_branch_calls_pipx_install(monkeypatch):
 
 
 def test_cmd_update_already_current_skips_pipx(monkeypatch):
-    """A matching PyPI version does not call pipx."""
+    """A matching PyPI spec does not call pipx install."""
     monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
     monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.pipx_package_spec", lambda: "plaibook")
     monkeypatch.setattr(
         "plaibook.cli.pipx_install_pypi",
         lambda version: (_ for _ in ()).throw(AssertionError("pipx should not run")),
@@ -448,6 +480,29 @@ def test_cmd_update_already_current_skips_pipx(monkeypatch):
     code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
 
     assert code == 0
+
+
+def test_cmd_update_replaces_a_git_spec_at_the_same_version(monkeypatch, capsys):
+    """A branch install does not stick when its version already matches PyPI."""
+    calls = []
+    monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
+    monkeypatch.setattr(
+        "plaibook.cli.pipx_package_spec",
+        lambda: "git+https://github.com/aknochow/ansible-plaibook.git@main",
+    )
+    monkeypatch.setattr("plaibook.update._exclusive_update_lock", _null_lock)
+    monkeypatch.setattr(
+        "plaibook.cli.pipx_install_pypi",
+        lambda version: calls.append(version) or _completed(),
+    )
+    monkeypatch.setattr("plaibook.cli.pipx_installed_version", lambda: "0.1.26")
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
+
+    assert code == 0
+    assert calls == ["0.1.26"]
+    assert "installed from a git ref" in capsys.readouterr().err
 
 
 def argparse_namespace(**kwargs):

@@ -177,6 +177,39 @@ def pipx_installed_version() -> str | None:
     return None
 
 
+def pipx_package_spec() -> str | None:
+    """Return the spec pipx recorded for plaibook.
+
+    A PyPI install is ``plaibook``. ``plai update --branch`` records a git
+    URL. None means pipx is absent or has no plaibook venv.
+    """
+    if shutil.which("pipx") is None:
+        return None
+    result = _run_pipx([pipx_executable(), "list", "--json"])
+    if result.returncode != 0 or not (result.stdout or "").strip():
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    venvs = payload.get("venvs") if isinstance(payload, dict) else None
+    entry = venvs.get("plaibook") if isinstance(venvs, dict) else None
+    metadata = entry.get("metadata") if isinstance(entry, dict) else None
+    main = metadata.get("main_package") if isinstance(metadata, dict) else None
+    spec = main.get("package_or_url") if isinstance(main, dict) else None
+    if not isinstance(spec, str):
+        return None
+    spec = spec.strip()
+    return spec or None
+
+
+def pipx_spec_is_pypi(spec: str | None) -> bool:
+    """True when there is no recorded git spec to replace."""
+    if spec is None:
+        return True
+    return spec == "plaibook" or spec.startswith("plaibook==")
+
+
 def pipx_upgrade_plaibook() -> subprocess.CompletedProcess[str]:
     """Upgrade plaibook from the source pipx already recorded for it.
 
