@@ -147,6 +147,32 @@ def test_fetch_pypi_latest_version_missing_version(monkeypatch):
         fetch_pypi_latest_version()
 
 
+def _mock_pypi_body(monkeypatch, body: bytes) -> None:
+    mock_response = MagicMock()
+    mock_response.read.return_value = body
+    mock_response.__enter__ = MagicMock(return_value=mock_response)
+    mock_response.__exit__ = MagicMock(return_value=False)
+    monkeypatch.setattr("plaibook.update.urlopen", lambda request, timeout=None: mock_response)
+
+
+def test_fetch_pypi_latest_version_rejects_invalid_utf8(monkeypatch):
+    """Invalid UTF-8 from PyPI is a NetworkError, not an uncaught decode error."""
+    _mock_pypi_body(monkeypatch, b"\xff")
+    with pytest.raises(NetworkError, match="invalid JSON"):
+        fetch_pypi_latest_version()
+
+
+def test_fetch_pypi_latest_version_rejects_a_non_string_version(monkeypatch):
+    """A non-string info.version does not escape the CLI as TypeError."""
+    _mock_pypi_body(monkeypatch, json.dumps({"info": {"version": 1}}).encode("utf-8"))
+    with pytest.raises(NetworkError, match="version was not a string"):
+        fetch_pypi_latest_version()
+
+    _mock_pypi_body(monkeypatch, json.dumps({"info": "plaibook"}).encode("utf-8"))
+    with pytest.raises(NetworkError, match="version was not a string"):
+        fetch_pypi_latest_version()
+
+
 def test_prompt_confirm_yes(monkeypatch):
     """Test prompt_confirm returns True for 'y' input."""
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
@@ -288,7 +314,7 @@ def test_pipx_package_spec_reads_a_git_url(monkeypatch):
     assert pipx_spec_is_pypi(spec) is False
     assert pipx_spec_is_pypi("plaibook") is True
     assert pipx_spec_is_pypi("plaibook==0.1.26") is True
-    assert pipx_spec_is_pypi(None) is True
+    assert pipx_spec_is_pypi(None) is False
 
 
 def test_pipx_package_spec_missing_venv_is_not_a_git_install(monkeypatch):
@@ -341,6 +367,8 @@ def test_pipx_missing(monkeypatch):
         pipx_install_git_ref("main")
     with pytest.raises(UpdateError, match="pipx is not on PATH"):
         pipx_install_pypi("0.1.27")
+    with pytest.raises(UpdateError, match="pipx is not on PATH"):
+        pipx_package_spec()
 
 
 def test_cmd_update_check_does_not_call_pipx(monkeypatch, capsys):
@@ -430,11 +458,18 @@ def test_cmd_update_branch_calls_pipx_install(monkeypatch):
     assert calls == ["main"]
 
 
-def test_cmd_update_already_current_skips_pipx(monkeypatch):
-    """A matching PyPI spec does not call pipx install."""
+def test_cmd_update_already_current_skips_pipx(monkeypatch, capsys):
+    """A matching PyPI spec does not call pipx install, and the read holds the lock."""
+    state = {"held": False, "read_while_held": False}
+
+    def spec():
+        state["read_while_held"] = state["held"]
+        return "plaibook"
+
     monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
     monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
-    monkeypatch.setattr("plaibook.cli.pipx_package_spec", lambda: "plaibook")
+    monkeypatch.setattr("plaibook.cli.pipx_package_spec", spec)
+    monkeypatch.setattr("plaibook.update._exclusive_update_lock", _recording_lock(state))
     monkeypatch.setattr(
         "plaibook.cli.pipx_install_pypi",
         lambda version: (_ for _ in ()).throw(AssertionError("pipx should not run")),
@@ -443,6 +478,30 @@ def test_cmd_update_already_current_skips_pipx(monkeypatch):
     code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
 
     assert code == 0
+    assert state["read_while_held"] is True
+    assert "already up to date" in capsys.readouterr().err
+
+
+def test_cmd_update_installs_when_pipx_has_no_venv(monkeypatch, capsys):
+    """A matching process version is not success when pipx has no plaibook venv."""
+    calls = []
+    monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.pipx_package_spec", lambda: None)
+    monkeypatch.setattr("plaibook.update._exclusive_update_lock", _null_lock)
+    monkeypatch.setattr(
+        "plaibook.cli.pipx_install_pypi",
+        lambda version: calls.append(version) or _completed(),
+    )
+    monkeypatch.setattr("plaibook.cli.pipx_installed_version", lambda: "0.1.26")
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
+
+    assert code == 0
+    assert calls == ["0.1.26"]
+    err = capsys.readouterr().err
+    assert "already up to date" not in err
+    assert "not installed with pipx" in err
 
 
 def test_cmd_update_refuses_to_skip_when_the_pipx_spec_cannot_be_read(monkeypatch, capsys):
@@ -503,3 +562,17 @@ def _null_lock(home=None):
     from contextlib import nullcontext
 
     return nullcontext()
+
+
+def _recording_lock(state):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def lock(home=None):
+        state["held"] = True
+        try:
+            yield
+        finally:
+            state["held"] = False
+
+    return lock

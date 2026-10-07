@@ -76,6 +76,19 @@ def current_version() -> str:
     return __version__
 
 
+def _parse_pypi_version(raw: bytes) -> str:
+    """Return info.version, or raise NetworkError for a malformed body."""
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, AttributeError) as exc:
+        raise NetworkError(f"PyPI returned invalid JSON: {exc}") from exc
+    info = payload.get("info") if isinstance(payload, dict) else None
+    version = info.get("version") if isinstance(info, dict) else None
+    if not isinstance(version, str) or not version.strip():
+        raise NetworkError("PyPI returned invalid JSON: version was not a string")
+    return version
+
+
 def fetch_pypi_latest_version(timeout: int = PYPI_TIMEOUT_SECONDS) -> str:
     """Query PyPI JSON API and return the latest published version.
 
@@ -86,8 +99,7 @@ def fetch_pypi_latest_version(timeout: int = PYPI_TIMEOUT_SECONDS) -> str:
         try:
             req = Request(PYPI_JSON_API, headers={"User-Agent": f"plaibook/{__version__}"})
             with urlopen(req, timeout=timeout) as response:
-                data = json.loads(response.read().decode("utf-8"))
-                return data["info"]["version"]
+                return _parse_pypi_version(response.read())
         except (HTTPError, URLError) as exc:
             if attempt == MAX_RETRIES:
                 raise NetworkError(
@@ -95,8 +107,6 @@ def fetch_pypi_latest_version(timeout: int = PYPI_TIMEOUT_SECONDS) -> str:
                 ) from exc
             wait = RETRY_BACKOFF_BASE ** (attempt - 1)
             time.sleep(wait)
-        except (KeyError, json.JSONDecodeError) as exc:
-            raise NetworkError(f"PyPI returned invalid JSON: {exc}") from exc
     # Should not reach here
     raise NetworkError("Failed to fetch PyPI metadata")
 
@@ -189,12 +199,16 @@ def pipx_package_spec() -> str | None:
     """Return the spec pipx recorded for plaibook.
 
     A PyPI install is ``plaibook``. ``plai update --branch`` records a git
-    URL. None means pipx is not installed, or its list has no plaibook venv.
+    URL. None means pipx ran and has no plaibook venv. That is not a PyPI
+    install.
 
-    Raises UpdateError when pipx is installed but the list cannot be read.
+    Raises UpdateError when pipx is missing or its list cannot be read.
     """
     if shutil.which("pipx") is None:
-        return None
+        raise UpdateError(
+            "pipx is not on PATH. Install plaibook with `pipx install plaibook`, "
+            "then run plai update."
+        )
     result = _run_pipx([pipx_executable(), "list", "--json"])
     if result.returncode != 0 or not (result.stdout or "").strip():
         raise _unreadable_pipx_spec("pipx list --json failed")
@@ -217,12 +231,14 @@ def pipx_package_spec() -> str | None:
 
 
 def pipx_spec_is_pypi(spec: str | None) -> bool:
-    """True when pipx recorded a PyPI name, or recorded no plaibook venv.
+    """True only when pipx recorded a PyPI name for plaibook.
 
-    None is only the no-venv result. An unreadable list raises instead.
+    None means the list succeeded and plaibook has no venv. That is not
+    a PyPI install, and a missing or unreadable pipx raises instead of
+    returning None.
     """
     if spec is None:
-        return True
+        return False
     return spec == "plaibook" or spec.startswith("plaibook==")
 
 

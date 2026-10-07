@@ -776,27 +776,36 @@ def cmd_update(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        replace_git = current == latest and not pipx_spec_is_pypi(pipx_package_spec())
-        if current == latest and not replace_git:
-            print(f"plaibook is already up to date ({current}).", file=sys.stderr)
-            return 0
-        if replace_git:
-            print(
-                f"plaibook {current} is installed from a git ref. "
-                f"Reinstalling {latest} from PyPI.",
-                file=sys.stderr,
-            )
-            prompt = f"Replace the git install of plaibook {current} with the PyPI release?"
-        else:
-            print(f"Update available: {current} → {latest}", file=sys.stderr)
-            prompt = f"Update plaibook from {current} to {latest}?"
-        if not _confirmed(args, prompt):
-            print("Update cancelled.", file=sys.stderr)
-            return 1
-
-        print(f"Installing plaibook {latest} from PyPI with pipx...", file=sys.stderr)
+        # Hold the lock across the spec read and the install. A concurrent
+        # --branch must not land between "already PyPI" and the return.
         from plaibook.update import _exclusive_update_lock
         with _exclusive_update_lock():
+            spec = pipx_package_spec() if current == latest else None
+            if current == latest and pipx_spec_is_pypi(spec):
+                print(f"plaibook is already up to date ({current}).", file=sys.stderr)
+                return 0
+            if current != latest:
+                print(f"Update available: {current} → {latest}", file=sys.stderr)
+                prompt = f"Update plaibook from {current} to {latest}?"
+            elif spec is None:
+                print(
+                    f"plaibook {current} is not installed with pipx. "
+                    f"Installing {latest} from PyPI.",
+                    file=sys.stderr,
+                )
+                prompt = f"Install plaibook {latest} into pipx from PyPI?"
+            else:
+                print(
+                    f"plaibook {current} is installed from a git ref. "
+                    f"Reinstalling {latest} from PyPI.",
+                    file=sys.stderr,
+                )
+                prompt = f"Replace the git install of plaibook {current} with the PyPI release?"
+            if not _confirmed(args, prompt):
+                print("Update cancelled.", file=sys.stderr)
+                return 1
+
+            print(f"Installing plaibook {latest} from PyPI with pipx...", file=sys.stderr)
             result = pipx_install_pypi(latest)
             if result.returncode != 0:
                 return _pipx_failed(result)

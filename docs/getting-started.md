@@ -22,8 +22,10 @@ environment (`pipx install --force --pip-args=--no-cache-dir
 plaibook==VERSION`). `--no-cache-dir` is there because the operator
 sandbox cannot write pip's cache. A previous `plai update --branch`
 does not stick, including when that ref's version already matches the
-PyPI release. If `pipx list` cannot be read, the command stops instead
-of reporting that the PyPI release is already installed. `plai update
+PyPI release. That check runs while the update lock is held. The command
+reports the release as already installed only when pipx recorded it. A
+missing pipx environment is installed. If pipx is not on PATH, or
+`pipx list` cannot be read, the command stops. `plai update
 --check` compares the installed version to PyPI and does not install.
 `plai update --branch REF` installs that
 git ref with `pipx install --force` and the same pip argument (a
