@@ -275,8 +275,9 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         description=(
             "Upgrade the pipx-managed plaibook install. "
             "With no flags this installs the current PyPI release "
-            "(`pipx install --force plaibook==VERSION`). "
-            "--branch installs that git ref with `pipx install --force`. "
+            "(`pipx install --force --pip-args=--no-cache-dir plaibook==VERSION`). "
+            "--branch installs that git ref with `pipx install --force` "
+            "and the same pip argument. "
             "--check compares versions and does not run pipx. "
             "Without a terminal, pass --yes."
         ),
@@ -740,7 +741,8 @@ def cmd_update(args: argparse.Namespace) -> int:
 
             print(f"Installing plaibook from git ref: {args.branch}", file=sys.stderr)
             print(
-                "(pipx install --force git+https://github.com/aknochow/ansible-plaibook.git)",
+                "(pipx install --force --pip-args=--no-cache-dir "
+                "git+https://github.com/aknochow/ansible-plaibook.git)",
                 file=sys.stderr,
             )
 

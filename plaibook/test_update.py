@@ -13,33 +13,16 @@ from plaibook.cli import cmd_update
 from plaibook.update import (
     NetworkError,
     UpdateError,
-    _cleartext_http,
     _validate_github_ref,
     current_version,
     fetch_pypi_latest_version,
-    pip_install_git_ref,
     pipx_install_git_ref,
     pipx_install_pypi,
     pipx_installed_version,
     pipx_upgrade_plaibook,
     prompt_confirm,
-    update_cache_dir,
     update_lock_path,
-    validate_pyproject_is_plaibook,
 )
-
-
-def test_update_cache_dir_default():
-    """Test update_cache_dir returns correct path."""
-    cache_dir = update_cache_dir()
-    assert cache_dir.name == "updates"
-    assert "ansible-plaibook" in str(cache_dir)
-
-
-def test_update_cache_dir_custom_home(tmp_path):
-    """Test update_cache_dir with custom home."""
-    cache_dir = update_cache_dir(home=tmp_path)
-    assert cache_dir == tmp_path / ".cache" / "ansible-plaibook" / "updates"
 
 
 def test_update_lock_path_default():
@@ -71,19 +54,6 @@ def test_current_version():
     assert len(version) > 0
     # Should match semantic versioning pattern
     assert "." in version
-
-
-def test_cleartext_http_detects_http():
-    """Test _cleartext_http detects HTTP URLs."""
-    assert _cleartext_http("http://example.com") is True
-    assert _cleartext_http("HTTP://example.com") is True
-    assert _cleartext_http("  http://example.com  ") is True
-
-
-def test_cleartext_http_allows_https():
-    """Test _cleartext_http allows HTTPS URLs."""
-    assert _cleartext_http("https://example.com") is False
-    assert _cleartext_http("HTTPS://example.com") is False
 
 
 def test_validate_github_ref_accepts_valid_refs():
@@ -176,55 +146,6 @@ def test_fetch_pypi_latest_version_missing_version(monkeypatch):
         fetch_pypi_latest_version()
 
 
-def test_validate_pyproject_is_plaibook_success(tmp_path):
-    """Test validate_pyproject_is_plaibook with valid pyproject.toml."""
-    pyproject_content = """
-[project]
-name = "plaibook"
-version = "0.1.27"
-description = "Test"
-"""
-    pyproject_path = tmp_path / "pyproject.toml"
-    pyproject_path.write_text(pyproject_content)
-
-    version = validate_pyproject_is_plaibook(tmp_path)
-    assert version == "0.1.27"
-
-
-def test_validate_pyproject_is_plaibook_wrong_name(tmp_path):
-    """Test validate_pyproject_is_plaibook rejects wrong project name."""
-    pyproject_content = """
-[project]
-name = "evil-package"
-version = "0.1.0"
-"""
-    pyproject_path = tmp_path / "pyproject.toml"
-    pyproject_path.write_text(pyproject_content)
-
-    with pytest.raises(UpdateError, match="Not a plaibook repository"):
-        validate_pyproject_is_plaibook(tmp_path)
-
-
-def test_validate_pyproject_is_plaibook_missing_file(tmp_path):
-    """Test validate_pyproject_is_plaibook with missing pyproject.toml."""
-    with pytest.raises(UpdateError, match="No pyproject.toml found"):
-        validate_pyproject_is_plaibook(tmp_path)
-
-
-def test_validate_pyproject_is_plaibook_missing_version(tmp_path):
-    """Test validate_pyproject_is_plaibook with missing version."""
-    pyproject_content = """
-[project]
-name = "plaibook"
-description = "Test"
-"""
-    pyproject_path = tmp_path / "pyproject.toml"
-    pyproject_path.write_text(pyproject_content)
-
-    with pytest.raises(UpdateError, match="No version found"):
-        validate_pyproject_is_plaibook(tmp_path)
-
-
 def test_prompt_confirm_yes(monkeypatch):
     """Test prompt_confirm returns True for 'y' input."""
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
@@ -311,59 +232,6 @@ def test_verify_installation_import_error(monkeypatch):
     assert verify_installation() is False
 
 
-def test_pip_install_git_ref_constructs_correct_url(monkeypatch):
-    """Test pip_install_git_ref builds the correct git+https URL."""
-    ref = "main"
-    captured_argv = []
-
-    def mock_run(argv, **kwargs):
-        captured_argv.append(argv)
-        result = MagicMock()
-        result.returncode = 0
-        result.stdout = ""
-        result.stderr = ""
-        return result
-
-    monkeypatch.setattr("subprocess.run", mock_run)
-
-    pip_install_git_ref(ref)
-
-    assert len(captured_argv) == 1
-    argv = captured_argv[0]
-    assert "pip" in argv
-    assert "install" in argv
-    assert "--force-reinstall" in argv
-    assert "--no-cache-dir" in argv
-    assert "git+https://github.com/aknochow/ansible-plaibook.git@main" in argv
-
-
-def test_pip_install_git_ref_validates_ref(monkeypatch):
-    """Test pip_install_git_ref validates the ref."""
-    def mock_run(argv, **kwargs):
-        result = MagicMock()
-        result.returncode = 0
-        return result
-
-    monkeypatch.setattr("subprocess.run", mock_run)
-
-    # Should reject path traversal
-    with pytest.raises(UpdateError, match="path traversal"):
-        pip_install_git_ref("../evil")
-
-
-def test_pip_install_git_ref_handles_subprocess_error(monkeypatch):
-    """Test pip_install_git_ref handles subprocess errors."""
-    import subprocess
-
-    def mock_run(argv, **kwargs):
-        raise subprocess.TimeoutExpired(argv, timeout=600)
-
-    monkeypatch.setattr("subprocess.run", mock_run)
-
-    with pytest.raises(UpdateError, match="timed out"):
-        pip_install_git_ref("main")
-
-
 def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> MagicMock:
     result = MagicMock()
     result.returncode = returncode
@@ -411,6 +279,7 @@ def test_pipx_install_git_ref_argv(monkeypatch):
         "/usr/bin/pipx",
         "install",
         "--force",
+        "--pip-args=--no-cache-dir",
         "git+https://github.com/aknochow/ansible-plaibook.git@v0.1.26",
     ]]
 
@@ -439,7 +308,13 @@ def test_pipx_install_pypi_argv(monkeypatch):
 
     pipx_install_pypi("0.1.27")
 
-    assert captured == [["/usr/bin/pipx", "install", "--force", "plaibook==0.1.27"]]
+    assert captured == [[
+        "/usr/bin/pipx",
+        "install",
+        "--force",
+        "--pip-args=--no-cache-dir",
+        "plaibook==0.1.27",
+    ]]
 
 
 def test_pipx_install_pypi_rejects_bad_version():

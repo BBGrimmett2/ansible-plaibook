@@ -18,10 +18,12 @@ plai update
 ```
 
 `plai update` installs the current PyPI release into that pipx
-environment (`pipx install --force plaibook==VERSION`). A previous
-`plai update --branch` does not stick. `plai update --check` compares
-the installed version to PyPI and does not install. `plai update
---branch REF` installs that git ref with `pipx install --force` (a
+environment (`pipx install --force --pip-args=--no-cache-dir
+plaibook==VERSION`). `--no-cache-dir` is there because the operator
+sandbox cannot write pip's cache. A previous `plai update --branch`
+does not stick. `plai update --check` compares the installed version
+to PyPI and does not install. `plai update --branch REF` installs that
+git ref with `pipx install --force` and the same pip argument (a
 branch, tag, or commit SHA). A non-interactive run must pass `-y` or
 `--yes`. Without a terminal, the command cancels.
 
