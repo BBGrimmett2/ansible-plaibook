@@ -19,6 +19,8 @@ from plaibook.update import (
     fetch_pypi_latest_version,
     pip_install_git_ref,
     pipx_install_git_ref,
+    pipx_install_pypi,
+    pipx_installed_version,
     pipx_upgrade_plaibook,
     prompt_confirm,
     update_cache_dir,
@@ -45,6 +47,21 @@ def test_update_lock_path_default():
     lock_path = update_lock_path()
     assert lock_path.name == "updates.lock"
     assert "ansible-plaibook" in str(lock_path)
+
+
+def test_update_lock_busy_does_not_say_to_delete_the_file(monkeypatch, tmp_path):
+    """The lock releases when the holder exits. Deleting the path does not."""
+    import plaibook.update as update
+
+    def busy(*_args, **_kwargs):
+        raise OSError(11, "Resource temporarily unavailable")
+
+    monkeypatch.setattr(update.fcntl, "flock", busy)
+    monkeypatch.setattr(update, "update_lock_path", lambda home=None: tmp_path / "updates.lock")
+    with pytest.raises(UpdateError, match="released when that process exits") as caught:
+        with update._exclusive_update_lock():
+            pass
+    assert "remove" not in str(caught.value)
 
 
 def test_current_version():
@@ -234,10 +251,10 @@ def test_prompt_confirm_default_yes(monkeypatch):
 
 
 def test_prompt_confirm_not_tty(monkeypatch):
-    """Test prompt_confirm returns default when not a TTY."""
+    """A non-interactive prompt fails closed. Pass --yes to proceed."""
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
-    assert prompt_confirm("Test?", default=True) is True
+    assert prompt_confirm("Test?", default=True) is False
     assert prompt_confirm("Test?", default=False) is False
 
 
@@ -356,7 +373,7 @@ def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> Magic
 
 
 def test_pipx_upgrade_argv(monkeypatch):
-    """Default upgrade is `pipx upgrade plaibook`."""
+    """pipx upgrade follows the spec pipx already recorded."""
     captured = []
 
     def mock_which(name):
@@ -406,14 +423,55 @@ def test_pipx_install_git_ref_rejects_traversal(monkeypatch):
         pipx_install_git_ref("../evil")
 
 
+def test_pipx_install_pypi_argv(monkeypatch):
+    """The default path installs that exact PyPI release."""
+    captured = []
+
+    def mock_which(name):
+        return "/usr/bin/pipx" if name == "pipx" else None
+
+    def mock_run(argv, **kwargs):
+        captured.append(argv)
+        return _completed()
+
+    monkeypatch.setattr("plaibook.update.shutil.which", mock_which)
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    pipx_install_pypi("0.1.27")
+
+    assert captured == [["/usr/bin/pipx", "install", "--force", "plaibook==0.1.27"]]
+
+
+def test_pipx_install_pypi_rejects_bad_version():
+    """A version that is not a release name never reaches pipx."""
+    with pytest.raises(UpdateError, match="Invalid PyPI version"):
+        pipx_install_pypi("1..2")
+    with pytest.raises(UpdateError, match="Invalid PyPI version"):
+        pipx_install_pypi("plaibook==0.1.27")
+
+
+def test_pipx_installed_version_reads_show(monkeypatch):
+    """The installed version comes from the pipx venv, not this process."""
+    monkeypatch.setattr("plaibook.update.shutil.which", lambda name: "/usr/bin/pipx")
+
+    def mock_run(argv, **kwargs):
+        assert argv == ["/usr/bin/pipx", "runpip", "plaibook", "show", "plaibook"]
+        return _completed(stdout="Name: plaibook\nVersion: 0.1.27\n")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+    assert pipx_installed_version() == "0.1.27"
+
+
 def test_pipx_missing(monkeypatch):
-    """Both install paths fail closed when pipx is not installed."""
+    """Install paths fail closed when pipx is not installed."""
     monkeypatch.setattr("plaibook.update.shutil.which", lambda name: None)
 
     with pytest.raises(UpdateError, match="pipx is not on PATH"):
         pipx_upgrade_plaibook()
     with pytest.raises(UpdateError, match="pipx is not on PATH"):
         pipx_install_git_ref("main")
+    with pytest.raises(UpdateError, match="pipx is not on PATH"):
+        pipx_install_pypi("0.1.27")
 
 
 def test_cmd_update_check_does_not_call_pipx(monkeypatch, capsys):
@@ -421,8 +479,8 @@ def test_cmd_update_check_does_not_call_pipx(monkeypatch, capsys):
     monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
     monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.27")
     monkeypatch.setattr(
-        "plaibook.cli.pipx_upgrade_plaibook",
-        lambda: (_ for _ in ()).throw(AssertionError("pipx should not run")),
+        "plaibook.cli.pipx_install_pypi",
+        lambda version: (_ for _ in ()).throw(AssertionError("pipx should not run")),
     )
 
     code = cmd_update(argparse_namespace(check=True, branch=None, yes=False))
@@ -433,22 +491,57 @@ def test_cmd_update_check_does_not_call_pipx(monkeypatch, capsys):
     assert "0.1.27" in err
 
 
-def test_cmd_update_default_calls_pipx_upgrade(monkeypatch):
-    """The default path upgrades the pipx install after the version check."""
+def test_cmd_update_default_installs_pypi_release(monkeypatch, capsys):
+    """The default path installs plaibook==VERSION and checks the pipx venv."""
     calls = []
     monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
     monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.27")
-    monkeypatch.setattr("plaibook.cli.prompt_confirm", lambda message, default=True: True)
     monkeypatch.setattr("plaibook.update._exclusive_update_lock", _null_lock)
     monkeypatch.setattr(
-        "plaibook.cli.pipx_upgrade_plaibook",
-        lambda: calls.append("upgrade") or _completed(stdout="upgraded"),
+        "plaibook.cli.pipx_install_pypi",
+        lambda version: calls.append(version) or _completed(stdout="installed"),
     )
+    monkeypatch.setattr("plaibook.cli.pipx_installed_version", lambda: "0.1.27")
 
     code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
 
     assert code == 0
-    assert calls == ["upgrade"]
+    assert calls == ["0.1.27"]
+    assert "Successfully updated plaibook to 0.1.27" in capsys.readouterr().err
+
+
+def test_cmd_update_rejects_a_version_pipx_did_not_install(monkeypatch, capsys):
+    """Success is the version in the pipx venv, not the pipx return code."""
+    monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.27")
+    monkeypatch.setattr("plaibook.update._exclusive_update_lock", _null_lock)
+    monkeypatch.setattr("plaibook.cli.pipx_install_pypi", lambda version: _completed())
+    monkeypatch.setattr("plaibook.cli.pipx_installed_version", lambda: "0.1.26")
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "expected 0.1.27" in err
+    assert "Successfully" not in err
+
+
+def test_cmd_update_not_tty_requires_yes(monkeypatch, capsys):
+    """Without a terminal, the default path cancels unless --yes is set."""
+    monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.27")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr(
+        "plaibook.cli.pipx_install_pypi",
+        lambda version: (_ for _ in ()).throw(AssertionError("pipx should not run")),
+    )
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=False))
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "--yes" in err
+    assert "Update cancelled." in err
 
 
 def test_cmd_update_branch_calls_pipx_install(monkeypatch):
@@ -473,8 +566,8 @@ def test_cmd_update_already_current_skips_pipx(monkeypatch):
     monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
     monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
     monkeypatch.setattr(
-        "plaibook.cli.pipx_upgrade_plaibook",
-        lambda: (_ for _ in ()).throw(AssertionError("pipx should not run")),
+        "plaibook.cli.pipx_install_pypi",
+        lambda version: (_ for _ in ()).throw(AssertionError("pipx should not run")),
     )
 
     code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))

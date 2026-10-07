@@ -17,11 +17,13 @@ plai review
 plai update
 ```
 
-`plai update` upgrades that pipx install (`pipx upgrade plaibook`).
-`plai update --check` compares the installed version to PyPI and does
-not install. `plai update --branch REF` installs that git ref with
-`pipx install --force` (a branch, tag, or commit SHA). `-y` skips the
-confirmation prompt.
+`plai update` installs the current PyPI release into that pipx
+environment (`pipx install --force plaibook==VERSION`). A previous
+`plai update --branch` does not stick. `plai update --check` compares
+the installed version to PyPI and does not install. `plai update
+--branch REF` installs that git ref with `pipx install --force` (a
+branch, tag, or commit SHA). A non-interactive run must pass `-y` or
+`--yes`. Without a terminal, the command cancels.
 
 `plai review` is unchanged. Homebrew and Debian
 refuse `pip install` into the system Python (PEP 668); `pipx` (or

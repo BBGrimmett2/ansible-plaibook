@@ -55,7 +55,8 @@ from plaibook.update import (
     current_version,
     fetch_pypi_latest_version,
     pipx_install_git_ref,
-    pipx_upgrade_plaibook,
+    pipx_install_pypi,
+    pipx_installed_version,
     prompt_confirm,
 )
 from plaibook.wait import WaitSpinner, spinner_enabled
@@ -273,9 +274,11 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         help="Upgrade the pipx install of plaibook (or install a GitHub ref).",
         description=(
             "Upgrade the pipx-managed plaibook install. "
-            "With no flags this runs `pipx upgrade plaibook`. "
+            "With no flags this installs the current PyPI release "
+            "(`pipx install --force plaibook==VERSION`). "
             "--branch installs that git ref with `pipx install --force`. "
-            "--check compares versions and does not run pipx."
+            "--check compares versions and does not run pipx. "
+            "Without a terminal, pass --yes."
         ),
     )
     update.add_argument(
@@ -689,6 +692,16 @@ def _pipx_failed(result: subprocess.CompletedProcess[str]) -> int:
     return 2
 
 
+def _confirmed(args: argparse.Namespace, message: str) -> bool:
+    """Confirm an install. A non-interactive run must pass --yes."""
+    if args.yes:
+        return True
+    if not sys.stdin.isatty():
+        print("Pass --yes to update without a prompt.", file=sys.stderr)
+        return False
+    return prompt_confirm(message)
+
+
 def cmd_update(args: argparse.Namespace) -> int:
     """Upgrade the pipx install, or install a GitHub ref into pipx."""
     current = current_version()
@@ -721,12 +734,9 @@ def cmd_update(args: argparse.Namespace) -> int:
     # GitHub branch install (issue #61: use git+https, not tarball)
     if args.branch:
         try:
-            if not args.yes:
-                if not prompt_confirm(
-                    f"Install plaibook from git ref '{args.branch}'?"
-                ):
-                    print("Update cancelled.", file=sys.stderr)
-                    return 1
+            if not _confirmed(args, f"Install plaibook from git ref '{args.branch}'?"):
+                print("Update cancelled.", file=sys.stderr)
+                return 1
 
             print(f"Installing plaibook from git ref: {args.branch}", file=sys.stderr)
             print(
@@ -767,19 +777,24 @@ def cmd_update(args: argparse.Namespace) -> int:
 
     try:
         print(f"Update available: {current} → {latest}", file=sys.stderr)
+        if not _confirmed(args, f"Update plaibook from {current} to {latest}?"):
+            print("Update cancelled.", file=sys.stderr)
+            return 1
 
+        print(f"Installing plaibook {latest} from PyPI with pipx...", file=sys.stderr)
         from plaibook.update import _exclusive_update_lock
         with _exclusive_update_lock():
-            if not args.yes:
-                if not prompt_confirm(f"Update plaibook from {current} to {latest}?"):
-                    print("Update cancelled.", file=sys.stderr)
-                    return 1
-
-            print("Upgrading plaibook with pipx...", file=sys.stderr)
-            result = pipx_upgrade_plaibook()
+            result = pipx_install_pypi(latest)
             if result.returncode != 0:
                 return _pipx_failed(result)
+            installed = pipx_installed_version()
             _print_pipx_output(result)
+            if installed != latest:
+                print(
+                    f"pipx reports plaibook {installed or 'unknown'}, expected {latest}.",
+                    file=sys.stderr,
+                )
+                return 2
             print(f"Successfully updated plaibook to {latest}", file=sys.stderr)
             return 0
 

@@ -73,7 +73,7 @@ def _exclusive_update_lock(home: Path | None = None) -> Iterator[None]:
         except OSError as exc:
             raise UpdateError(
                 "Another plai update is already running. "
-                f"If not, remove the lock file: {lock_path}"
+                "The lock is released when that process exits."
             ) from exc
         yield
     finally:
@@ -419,10 +419,43 @@ def _run_pipx(argv: list[str]) -> subprocess.CompletedProcess[str]:
         raise UpdateError(f"pipx timed out after {DOWNLOAD_TIMEOUT_SECONDS}s") from exc
 
 
+_PYPI_VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+-]*$")
+
+
+def pipx_install_pypi(version: str) -> subprocess.CompletedProcess[str]:
+    """Install that exact plaibook release from PyPI, replacing any git source.
+
+    ``pipx upgrade plaibook`` follows the spec pipx already recorded. After
+    ``plai update --branch``, that spec is a git ref, so the default path
+    must install ``plaibook==VERSION`` instead.
+    """
+    if not _PYPI_VERSION.fullmatch(version) or ".." in version:
+        raise UpdateError(f"Invalid PyPI version: {version}")
+    return _run_pipx([
+        pipx_executable(),
+        "install",
+        "--force",
+        f"plaibook=={version}",
+    ])
+
+
+def pipx_installed_version() -> str | None:
+    """Return the plaibook version inside the pipx venv, not this process."""
+    result = _run_pipx([pipx_executable(), "runpip", "plaibook", "show", "plaibook"])
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        if line.startswith("Version:"):
+            return line.split(":", 1)[1].strip() or None
+    return None
+
+
 def pipx_upgrade_plaibook() -> subprocess.CompletedProcess[str]:
     """Upgrade plaibook from the source pipx already recorded for it.
 
     ``pipx upgrade`` takes a package name. It does not accept a new git ref.
+    The default ``plai update`` path does not call this. It installs a PyPI
+    version so a previous ``--branch`` does not stick.
     """
     return _run_pipx([pipx_executable(), "upgrade", "plaibook"])
 
@@ -431,7 +464,8 @@ def pipx_install_git_ref(ref: str) -> subprocess.CompletedProcess[str]:
     """Install a GitHub ref into the pipx environment, replacing any existing plaibook.
 
     ``pipx upgrade`` cannot switch sources. ``pipx install --force`` records
-    this spec so a later ``plai update`` upgrades that same ref.
+    this spec. A later ``plai update`` with no flags installs the PyPI release
+    instead, so the git spec does not stick.
     """
     ref = _validate_github_ref(ref)
     git_url = f"git+https://github.com/{GITHUB_REPO}.git@{ref}"
@@ -457,13 +491,15 @@ def verify_installation(expected_version: str | None = None) -> bool:
 
 
 def prompt_confirm(message: str, default: bool = True) -> bool:
-    """Ask user Y/n confirmation (skip if stdin not a tty).
+    """Ask for Y/n confirmation.
 
-    Returns True if user confirms, False otherwise.
-    If stdin is not a tty, returns the default value.
+    Returns True if the user confirms, False otherwise.
+    When stdin is not a terminal, returns False. Non-interactive updates
+    must pass ``--yes``. The default applies only to an empty reply on a
+    terminal.
     """
     if not sys.stdin.isatty():
-        return default
+        return False
 
     prompt_text = f"{message} [{'Y/n' if default else 'y/N'}] "
     try:
