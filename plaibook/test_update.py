@@ -23,6 +23,7 @@ from plaibook.update import (
     pipx_package_spec,
     pipx_spec_is_pypi,
     prompt_confirm,
+    recorded_spec_is_pypi,
     running_install_kind,
     spec_matches_git_ref,
     update_lock_path,
@@ -109,6 +110,19 @@ def test_fetch_pypi_latest_version_success(monkeypatch):
 
     version = fetch_pypi_latest_version()
     assert version == "0.1.27"
+
+
+def test_fetch_pypi_latest_version_timeout_is_a_network_error(monkeypatch):
+    """A read timeout is NetworkError, not an uncaught TimeoutError."""
+    monkeypatch.setattr("plaibook.update.time.sleep", lambda _seconds: None)
+
+    def mock_urlopen(request, timeout=None):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr("plaibook.update.urlopen", mock_urlopen)
+
+    with pytest.raises(NetworkError, match="Failed to fetch PyPI metadata"):
+        fetch_pypi_latest_version()
 
 
 def test_fetch_pypi_latest_version_network_error(monkeypatch):
@@ -638,6 +652,62 @@ def test_cmd_update_uv_installs_the_running_tool(monkeypatch, capsys):
     assert code == 0
     assert calls == ["0.1.26"]
     assert "uv tool" in capsys.readouterr().err
+
+
+def test_recorded_spec_is_pypi_rejects_direct_urls():
+    """A non-PyPI direct URL is not an index install."""
+    assert recorded_spec_is_pypi(None) is True
+    assert recorded_spec_is_pypi("plaibook==0.1.26") is True
+    assert recorded_spec_is_pypi(
+        "https://files.pythonhosted.org/packages/ab/plaibook-0.1.26.whl"
+    ) is True
+    assert recorded_spec_is_pypi("file:///tmp/plaibook.whl") is False
+    assert recorded_spec_is_pypi("https://example.com/plaibook.whl") is False
+    assert recorded_spec_is_pypi(git_ref_spec("main")) is False
+
+
+def test_cmd_update_uv_reinstalls_a_file_url_at_the_same_version(monkeypatch, capsys):
+    """A direct file URL is not treated as the PyPI release."""
+    calls = []
+    monkeypatch.setattr("plaibook.cli.running_install_kind", lambda: "uv")
+    monkeypatch.setattr("plaibook.cli.uv_installed_version", lambda: "0.1.26")
+    monkeypatch.setattr(
+        "plaibook.cli.uv_recorded_spec",
+        lambda: "file:///tmp/plaibook.whl",
+    )
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.update._exclusive_update_lock", _null_lock)
+    monkeypatch.setattr(
+        "plaibook.cli.uv_install_pypi",
+        lambda version: calls.append(version) or _completed(),
+    )
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
+
+    assert code == 0
+    assert calls == ["0.1.26"]
+    err = capsys.readouterr().err
+    assert "already up to date" not in err
+    assert "file:///tmp/plaibook.whl" in err
+
+
+def test_cmd_update_uv_failure_names_uv(monkeypatch, capsys):
+    """A failed uv install is not reported as a pipx failure."""
+    failed = _completed(returncode=1, stderr="uv exploded")
+    monkeypatch.setattr("plaibook.cli.running_install_kind", lambda: "uv")
+    monkeypatch.setattr("plaibook.cli.uv_installed_version", lambda: "0.1.20")
+    monkeypatch.setattr("plaibook.cli.uv_recorded_spec", lambda: None)
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.update._exclusive_update_lock", _null_lock)
+    monkeypatch.setattr("plaibook.cli.uv_install_pypi", lambda version: failed)
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "uv tool failed:" in err
+    assert "pipx failed" not in err
+    assert "uv exploded" in err
 
 
 def test_running_install_kind_names_pipx_uv_editable_and_venv(monkeypatch, tmp_path):

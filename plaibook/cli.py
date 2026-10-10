@@ -60,6 +60,7 @@ from plaibook.update import (
     pipx_package_spec,
     pipx_spec_is_pypi,
     prompt_confirm,
+    recorded_spec_is_pypi,
     running_install_kind,
     spec_matches_git_ref,
     uv_install_git_ref,
@@ -695,8 +696,8 @@ def _print_pipx_output(result: subprocess.CompletedProcess[str]) -> None:
         print(text, file=sys.stderr)
 
 
-def _pipx_failed(result: subprocess.CompletedProcess[str]) -> int:
-    print("pipx failed:", file=sys.stderr)
+def _pipx_failed(result: subprocess.CompletedProcess[str], label: str = "pipx") -> int:
+    print(f"{label} failed:", file=sys.stderr)
     for stream in (result.stderr, result.stdout):
         tail = (stream or "")[-2000:].strip()
         if tail:
@@ -924,8 +925,14 @@ def _cmd_update_tool(args, installer, git_installer, version_of, spec_of, label:
             return 2
         print(f"Current version: {current}", file=sys.stderr)
         print(f"Latest version:  {latest}", file=sys.stderr)
-        if current == latest:
+        recorded = spec_of()
+        if current == latest and recorded_spec_is_pypi(recorded):
             print("plaibook is already up to date.", file=sys.stderr)
+        elif not recorded_spec_is_pypi(recorded):
+            print(
+                f"plaibook {current} is installed from {recorded}, not PyPI.",
+                file=sys.stderr,
+            )
         else:
             print(f"Update available: {current} → {latest}", file=sys.stderr)
         return 0
@@ -939,7 +946,7 @@ def _cmd_update_tool(args, installer, git_installer, version_of, spec_of, label:
             with _exclusive_update_lock():
                 result = git_installer(args.branch)
                 if result.returncode != 0:
-                    return _pipx_failed(result)
+                    return _pipx_failed(result, label)
                 recorded = spec_of()
                 if not spec_matches_git_ref(recorded, args.branch):
                     print(
@@ -956,16 +963,17 @@ def _cmd_update_tool(args, installer, git_installer, version_of, spec_of, label:
 
         latest = fetch_pypi_latest_version()
         recorded = spec_of()
-        git_source = isinstance(recorded, str) and recorded.startswith("git+")
-        if current == latest and not git_source:
+        if current == latest and recorded_spec_is_pypi(recorded):
             print(f"plaibook is already up to date ({current}).", file=sys.stderr)
             return 0
-        if git_source:
+        if not recorded_spec_is_pypi(recorded):
             print(
-                f"plaibook {current} is installed from a git ref. "
+                f"plaibook {current} is installed from {recorded}. "
                 f"Reinstalling {latest} from PyPI.",
                 file=sys.stderr,
             )
+        else:
+            print(f"Update available: {current} → {latest}", file=sys.stderr)
         if not _confirmed(args, f"Update plaibook from {current} to {latest}?"):
             print("Update cancelled.", file=sys.stderr)
             return 1
@@ -973,7 +981,7 @@ def _cmd_update_tool(args, installer, git_installer, version_of, spec_of, label:
         with _exclusive_update_lock():
             result = installer(latest)
             if result.returncode != 0:
-                return _pipx_failed(result)
+                return _pipx_failed(result, label)
             installed = version_of()
             if installed != latest:
                 print(

@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from plaibook import __version__
@@ -133,6 +134,31 @@ def spec_matches_git_ref(spec: str | None, ref: str) -> bool:
     return spec == expected or spec.startswith(expected + "#")
 
 
+_PYPI_DOWNLOAD_HOSTS = frozenset({"files.pythonhosted.org", "pypi.org", "pypi.python.org"})
+
+
+def recorded_spec_is_pypi(spec: str | None) -> bool:
+    """True only for an index install or a file actually hosted on PyPI.
+
+    None means there is no direct URL, which is a normal index install.
+    ``git+``, ``file:``, and any other host are not PyPI, even when the
+    installed version string matches the current release.
+    """
+    if spec is None:
+        return True
+    if not isinstance(spec, str):
+        return False
+    text = spec.strip()
+    if not text or text.startswith("git+") or text.lower().startswith("file:"):
+        return False
+    if text == "plaibook" or text.startswith("plaibook=="):
+        return True
+    if "://" not in text:
+        return False
+    host = (urlsplit(text).hostname or "").lower()
+    return host in _PYPI_DOWNLOAD_HOSTS
+
+
 def _parse_pypi_version(raw: bytes) -> str:
     """Return info.version, or raise NetworkError for a malformed body."""
     try:
@@ -157,7 +183,7 @@ def fetch_pypi_latest_version(timeout: int = PYPI_TIMEOUT_SECONDS) -> str:
             req = Request(PYPI_JSON_API, headers={"User-Agent": f"plaibook/{__version__}"})
             with urlopen(req, timeout=timeout) as response:
                 return _parse_pypi_version(response.read())
-        except (HTTPError, URLError) as exc:
+        except (HTTPError, URLError, TimeoutError) as exc:
             if attempt == MAX_RETRIES:
                 raise NetworkError(
                     f"Failed to fetch PyPI metadata after {MAX_RETRIES} attempts: {exc}"
