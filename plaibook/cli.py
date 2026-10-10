@@ -297,7 +297,11 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     update.add_argument(
         "--branch",
         metavar="REF",
-        help="Install this GitHub ref with pipx (branch, tag, or commit SHA) instead of upgrading PyPI.",
+        help=(
+            "Install this GitHub ref into the running install "
+            "(pipx, uv tool, or the current virtualenv; branch, tag, or commit SHA) "
+            "instead of the PyPI release."
+        ),
     )
     update.add_argument(
         "--check",
@@ -920,12 +924,12 @@ def _cmd_update_tool(args, installer, git_installer, version_of, spec_of, label:
             return 0
         try:
             latest = fetch_pypi_latest_version()
-        except NetworkError as exc:
+            recorded = spec_of()
+        except (UpdateError, NetworkError) as exc:
             print(str(exc), file=sys.stderr)
             return 2
         print(f"Current version: {current}", file=sys.stderr)
         print(f"Latest version:  {latest}", file=sys.stderr)
-        recorded = spec_of()
         if current == latest and recorded_spec_is_pypi(recorded):
             print("plaibook is already up to date.", file=sys.stderr)
         elif not recorded_spec_is_pypi(recorded):

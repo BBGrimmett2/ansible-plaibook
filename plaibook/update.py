@@ -140,7 +140,8 @@ _PYPI_DOWNLOAD_HOSTS = frozenset({"files.pythonhosted.org", "pypi.org", "pypi.py
 def recorded_spec_is_pypi(spec: str | None) -> bool:
     """True only for an index install or a file actually hosted on PyPI.
 
-    None means there is no direct URL, which is a normal index install.
+    None is only a confirmed absence of direct_url.json, which is a
+    normal index install. A failed read must not be passed as None.
     ``git+``, ``file:``, and any other host are not PyPI, even when the
     installed version string matches the current release.
     """
@@ -415,16 +416,33 @@ def uv_installed_version() -> str | None:
     )
 
 
-def _spec_from_direct_url_text(raw: str | None) -> str | None:
-    """Turn PEP 610 JSON into the git+https requirement this command records."""
-    if not raw:
-        return None
+_DIRECT_URL_ABSENT = "plaibook-direct-url:absent"
+_DIRECT_URL_PREFIX = "plaibook-direct-url:"
+_DIRECT_URL_SNIPPET = (
+    "import importlib.metadata as m\n"
+    "text = m.distribution('plaibook').read_text('direct_url.json')\n"
+    "print('plaibook-direct-url:absent' if text is None else 'plaibook-direct-url:' + text)\n"
+)
+
+
+def _spec_from_direct_url_text(raw: str) -> str:
+    """Turn PEP 610 JSON into the requirement this command records.
+
+    Raises UpdateError when the body is not a usable direct URL. Absence
+    of the file is handled before this is called.
+    """
     try:
         payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
+    except json.JSONDecodeError as exc:
+        raise UpdateError(
+            "Could not read plaibook's install source (direct_url.json was not JSON), "
+            "so this command will not treat the install as a PyPI release."
+        ) from exc
     if not isinstance(payload, dict):
-        return None
+        raise UpdateError(
+            "Could not read plaibook's install source (direct_url.json was not an object), "
+            "so this command will not treat the install as a PyPI release."
+        )
     url = payload.get("url")
     vcs = payload.get("vcs_info")
     revision = vcs.get("requested_revision") if isinstance(vcs, dict) else None
@@ -437,25 +455,43 @@ def _spec_from_direct_url_text(raw: str | None) -> str | None:
         return f"git+{base}@{revision.strip()}"
     if isinstance(url, str) and url.strip():
         return url.strip()
-    return None
+    raise UpdateError(
+        "Could not read plaibook's install source (direct_url.json did not name a URL), "
+        "so this command will not treat the install as a PyPI release."
+    )
+
+
+def _unreadable_install_source() -> UpdateError:
+    return UpdateError(
+        "Could not read plaibook's install source, "
+        "so this command will not treat the install as a PyPI release."
+    )
+
+
+def _recorded_spec(python: Path) -> str | None:
+    """Return the recorded requirement, or None when direct_url.json is absent.
+
+    None is not used for a failed read. A missing interpreter, a failed
+    snippet, or unusable JSON raises UpdateError.
+    """
+    raw = _run_python(python, _DIRECT_URL_SNIPPET)
+    if raw is None:
+        raise _unreadable_install_source()
+    if raw == _DIRECT_URL_ABSENT:
+        return None
+    if not raw.startswith(_DIRECT_URL_PREFIX):
+        raise _unreadable_install_source()
+    return _spec_from_direct_url_text(raw[len(_DIRECT_URL_PREFIX):])
 
 
 def uv_recorded_spec() -> str | None:
     """Requirement recorded for plaibook in the uv tool environment."""
-    raw = _run_python(
-        _uv_tool_python(),
-        "import importlib.metadata as m; print(m.distribution('plaibook').read_text('direct_url.json') or '')",
-    )
-    return _spec_from_direct_url_text(raw)
+    return _recorded_spec(_uv_tool_python())
 
 
 def venv_recorded_spec() -> str | None:
     """Requirement recorded for plaibook in this virtualenv."""
-    raw = _run_python(
-        Path(sys.executable),
-        "import importlib.metadata as m; print(m.distribution('plaibook').read_text('direct_url.json') or '')",
-    )
-    return _spec_from_direct_url_text(raw)
+    return _recorded_spec(Path(sys.executable))
 
 
 def venv_install_pypi(version: str) -> subprocess.CompletedProcess[str]:

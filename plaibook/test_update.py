@@ -27,6 +27,7 @@ from plaibook.update import (
     running_install_kind,
     spec_matches_git_ref,
     update_lock_path,
+    uv_recorded_spec,
 )
 
 
@@ -652,6 +653,44 @@ def test_cmd_update_uv_installs_the_running_tool(monkeypatch, capsys):
     assert code == 0
     assert calls == ["0.1.26"]
     assert "uv tool" in capsys.readouterr().err
+
+
+def test_uv_recorded_spec_absence_is_not_a_failed_read(monkeypatch):
+    """A missing direct_url.json is None. A failed interpreter read is an error."""
+    monkeypatch.setattr(
+        "plaibook.update._run_python",
+        lambda python, code: "plaibook-direct-url:absent",
+    )
+    assert uv_recorded_spec() is None
+
+    monkeypatch.setattr("plaibook.update._run_python", lambda python, code: None)
+    with pytest.raises(UpdateError, match="will not treat the install as a PyPI release"):
+        uv_recorded_spec()
+
+
+def test_cmd_update_uv_does_not_skip_when_the_source_cannot_be_read(monkeypatch, capsys):
+    """A failed source read is not 'already up to date' and does not install."""
+    def unreadable():
+        raise UpdateError(
+            "Could not read plaibook's install source, "
+            "so this command will not treat the install as a PyPI release."
+        )
+
+    monkeypatch.setattr("plaibook.cli.running_install_kind", lambda: "uv")
+    monkeypatch.setattr("plaibook.cli.uv_installed_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.uv_recorded_spec", unreadable)
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
+    monkeypatch.setattr(
+        "plaibook.cli.uv_install_pypi",
+        lambda version: (_ for _ in ()).throw(AssertionError("uv should not install")),
+    )
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "already up to date" not in err
+    assert "will not treat the install as a PyPI release" in err
 
 
 def test_recorded_spec_is_pypi_rejects_direct_urls():
