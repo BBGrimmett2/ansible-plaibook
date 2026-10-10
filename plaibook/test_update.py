@@ -16,14 +16,23 @@ from plaibook.update import (
     _validate_github_ref,
     current_version,
     fetch_pypi_latest_version,
+    git_ref_spec,
     pipx_install_git_ref,
     pipx_install_pypi,
     pipx_installed_version,
     pipx_package_spec,
     pipx_spec_is_pypi,
     prompt_confirm,
+    running_install_kind,
+    spec_matches_git_ref,
     update_lock_path,
 )
+
+
+@pytest.fixture(autouse=True)
+def _running_install_is_pipx(monkeypatch):
+    """Existing command tests describe the pipx install, not this checkout."""
+    monkeypatch.setattr("plaibook.cli.running_install_kind", lambda: "pipx")
 
 
 def test_update_lock_path_default():
@@ -451,6 +460,10 @@ def test_cmd_update_branch_calls_pipx_install(monkeypatch):
         "plaibook.cli.pipx_install_git_ref",
         lambda ref: calls.append(ref) or _completed(),
     )
+    monkeypatch.setattr(
+        "plaibook.cli.pipx_package_spec",
+        lambda: git_ref_spec("main"),
+    )
 
     code = cmd_update(argparse_namespace(check=False, branch="main", yes=True))
 
@@ -468,6 +481,7 @@ def test_cmd_update_already_current_skips_pipx(monkeypatch, capsys):
 
     monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
     monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.pipx_installed_version", lambda: "0.1.26")
     monkeypatch.setattr("plaibook.cli.pipx_package_spec", spec)
     monkeypatch.setattr("plaibook.update._exclusive_update_lock", _recording_lock(state))
     monkeypatch.setattr(
@@ -508,6 +522,7 @@ def test_cmd_update_refuses_to_skip_when_the_pipx_spec_cannot_be_read(monkeypatc
     """A matching version is not 'up to date' when pipx's spec is unreadable."""
     monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
     monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.pipx_installed_version", lambda: "0.1.26")
 
     def unreadable():
         raise UpdateError(
@@ -550,6 +565,95 @@ def test_cmd_update_replaces_a_git_spec_at_the_same_version(monkeypatch, capsys)
     assert code == 0
     assert calls == ["0.1.26"]
     assert "installed from a git ref" in capsys.readouterr().err
+
+
+def test_cmd_update_reinstalls_when_the_pipx_venv_is_older(monkeypatch, capsys):
+    """A process at the PyPI version does not skip an older pipx venv."""
+    calls = []
+    versions = iter(["0.1.20", "0.1.26"])
+    monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.cli.pipx_installed_version", lambda: next(versions))
+    monkeypatch.setattr("plaibook.cli.pipx_package_spec", lambda: "plaibook")
+    monkeypatch.setattr("plaibook.update._exclusive_update_lock", _null_lock)
+    monkeypatch.setattr(
+        "plaibook.cli.pipx_install_pypi",
+        lambda version: calls.append(version) or _completed(),
+    )
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
+
+    assert code == 0
+    assert calls == ["0.1.26"]
+    err = capsys.readouterr().err
+    assert "already up to date" not in err
+    assert "0.1.20" in err
+
+
+def test_cmd_update_branch_requires_the_recorded_spec(monkeypatch, capsys):
+    """A zero pipx exit is not success when the recorded spec is still PyPI."""
+    monkeypatch.setattr("plaibook.cli.current_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.update._exclusive_update_lock", _null_lock)
+    monkeypatch.setattr("plaibook.cli.pipx_install_git_ref", lambda ref: _completed())
+    monkeypatch.setattr("plaibook.cli.pipx_package_spec", lambda: "plaibook")
+
+    code = cmd_update(argparse_namespace(check=False, branch="main", yes=True))
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "expected git ref 'main'" in err
+    assert "Successfully" not in err
+
+
+def test_cmd_update_refuses_an_editable_checkout(monkeypatch, capsys):
+    """An editable plaibook is not replaced, and pipx is not touched."""
+    monkeypatch.setattr("plaibook.cli.running_install_kind", lambda: "editable")
+    monkeypatch.setattr(
+        "plaibook.cli.pipx_install_pypi",
+        lambda version: (_ for _ in ()).throw(AssertionError("pipx should not run")),
+    )
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
+
+    assert code == 2
+    assert "editable install" in capsys.readouterr().err
+
+
+def test_cmd_update_uv_installs_the_running_tool(monkeypatch, capsys):
+    """uv tool plaibook is upgraded with uv, not pipx."""
+    calls = []
+    versions = iter(["0.1.20", "0.1.26"])
+    monkeypatch.setattr("plaibook.cli.running_install_kind", lambda: "uv")
+    monkeypatch.setattr("plaibook.cli.uv_installed_version", lambda: next(versions))
+    monkeypatch.setattr("plaibook.cli.uv_recorded_spec", lambda: None)
+    monkeypatch.setattr("plaibook.cli.fetch_pypi_latest_version", lambda: "0.1.26")
+    monkeypatch.setattr("plaibook.update._exclusive_update_lock", _null_lock)
+    monkeypatch.setattr(
+        "plaibook.cli.uv_install_pypi",
+        lambda version: calls.append(version) or _completed(),
+    )
+
+    code = cmd_update(argparse_namespace(check=False, branch=None, yes=True))
+
+    assert code == 0
+    assert calls == ["0.1.26"]
+    assert "uv tool" in capsys.readouterr().err
+
+
+def test_running_install_kind_names_pipx_uv_editable_and_venv(monkeypatch, tmp_path):
+    """The prefix and direct_url decide which installer runs."""
+    monkeypatch.setattr("plaibook.update._direct_url", lambda: None)
+    pipx = tmp_path / "pipx" / "venvs" / "plaibook"
+    uv_tool = tmp_path / "uv" / "tools" / "plaibook"
+    assert running_install_kind(prefix=str(pipx)) == "pipx"
+    assert running_install_kind(prefix=str(uv_tool)) == "uv"
+    monkeypatch.setattr(
+        "plaibook.update._direct_url",
+        lambda: {"dir_info": {"editable": True}},
+    )
+    assert running_install_kind(prefix=str(pipx)) == "editable"
+    assert spec_matches_git_ref(git_ref_spec("main"), "main")
+    assert spec_matches_git_ref("plaibook", "main") is False
 
 
 def argparse_namespace(**kwargs):

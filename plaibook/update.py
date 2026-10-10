@@ -72,8 +72,65 @@ def _exclusive_update_lock(home: Path | None = None) -> Iterator[None]:
 
 
 def current_version() -> str:
-    """Return the currently installed plaibook version."""
+    """Return the version of the plaibook module this process imported."""
     return __version__
+
+
+def _direct_url() -> dict | None:
+    """PEP 610 direct_url.json for the plaibook distribution, if it has one."""
+    try:
+        from importlib.metadata import PackageNotFoundError, distribution
+
+        dist = distribution("plaibook")
+    except PackageNotFoundError:
+        return None
+    raw = dist.read_text("direct_url.json")
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def running_install_kind(prefix: str | None = None) -> str:
+    """How the plaibook process that is running was installed.
+
+    ``editable`` is a checkout (``pip install -e``) and is not replaced.
+    ``pipx`` and ``uv`` are tool installs. ``venv`` is a virtualenv whose
+    plaibook came from pip. ``unknown`` is anything else.
+    """
+    direct = _direct_url()
+    info = direct.get("dir_info") if isinstance(direct, dict) else None
+    if isinstance(info, dict) and info.get("editable"):
+        return "editable"
+
+    root = Path(prefix if prefix is not None else sys.prefix).resolve()
+    parts = set(root.parts)
+    cfg = root / "pyvenv.cfg"
+    cfg_text = cfg.read_text(errors="replace") if cfg.is_file() else ""
+    if ("pipx" in parts and "venvs" in parts) or "pipx" in cfg_text:
+        return "pipx"
+    if ("uv" in parts and "tools" in parts) or "\nuv =" in f"\n{cfg_text}":
+        return "uv"
+    if prefix is None and sys.prefix != getattr(sys, "base_prefix", sys.prefix):
+        return "venv"
+    return "unknown"
+
+
+def git_ref_spec(ref: str) -> str:
+    """The git+https requirement pipx and uv record for this repository."""
+    ref = _validate_github_ref(ref)
+    return f"git+https://github.com/{GITHUB_REPO}.git@{ref}"
+
+
+def spec_matches_git_ref(spec: str | None, ref: str) -> bool:
+    """True when a recorded requirement is exactly that git ref."""
+    expected = git_ref_spec(ref)
+    if not isinstance(spec, str):
+        return False
+    return spec == expected or spec.startswith(expected + "#")
 
 
 def _parse_pypi_version(raw: bytes) -> str:
@@ -250,8 +307,7 @@ def pipx_install_git_ref(ref: str) -> subprocess.CompletedProcess[str]:
     cannot write pip's cache. A later ``plai update`` with no flags installs
     the PyPI release instead, so the git spec does not stick.
     """
-    ref = _validate_github_ref(ref)
-    git_url = f"git+https://github.com/{GITHUB_REPO}.git@{ref}"
+    git_url = git_ref_spec(ref)
     # Reject user:token@host before the ref separator.
     if "@" in git_url.split("@")[0]:
         raise UpdateError("git URL must not contain embedded credentials")
@@ -262,6 +318,166 @@ def pipx_install_git_ref(ref: str) -> subprocess.CompletedProcess[str]:
         "--pip-args=--no-cache-dir",
         git_url,
     ])
+
+
+def uv_executable() -> str:
+    """Return the uv binary, or raise if this uv tool install cannot be upgraded."""
+    found = shutil.which("uv")
+    if not found:
+        raise UpdateError(
+            "uv is not on PATH. This plaibook was installed with `uv tool install plaibook`."
+        )
+    return found
+
+
+def _uv_tool_python() -> Path:
+    """Python inside the uv tool environment that is running this process."""
+    return Path(sys.prefix) / "bin" / "python"
+
+
+def _run_python(python: Path, code: str) -> str | None:
+    """Run a short snippet. None when the interpreter is missing or the snippet fails."""
+    if not python.is_file():
+        return None
+    try:
+        result = subprocess.run(
+            [str(python), "-c", code],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+    text = (result.stdout or "").strip()
+    return text or None
+
+
+def uv_install_pypi(version: str) -> subprocess.CompletedProcess[str]:
+    """Install that exact release into the uv tool environment."""
+    if not _PYPI_VERSION.fullmatch(version) or ".." in version:
+        raise UpdateError(f"Invalid PyPI version: {version}")
+    return _run_pipx([
+        uv_executable(),
+        "tool",
+        "install",
+        "--force",
+        "--no-cache",
+        f"plaibook=={version}",
+    ])
+
+
+def uv_install_git_ref(ref: str) -> subprocess.CompletedProcess[str]:
+    """Install a GitHub ref with uv tool, replacing the current tool env."""
+    return _run_pipx([
+        uv_executable(),
+        "tool",
+        "install",
+        "--force",
+        "--no-cache",
+        git_ref_spec(ref),
+    ])
+
+
+def uv_installed_version() -> str | None:
+    """Version of plaibook inside the uv tool environment, not this process."""
+    return _run_python(
+        _uv_tool_python(),
+        "import importlib.metadata as m; print(m.version('plaibook'))",
+    )
+
+
+def _spec_from_direct_url_text(raw: str | None) -> str | None:
+    """Turn PEP 610 JSON into the git+https requirement this command records."""
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    url = payload.get("url")
+    vcs = payload.get("vcs_info")
+    revision = vcs.get("requested_revision") if isinstance(vcs, dict) else None
+    if isinstance(url, str) and isinstance(revision, str) and revision.strip():
+        base = url.strip()
+        if base.startswith("git+"):
+            base = base[len("git+"):]
+        if not base.endswith(".git"):
+            base = base + ".git"
+        return f"git+{base}@{revision.strip()}"
+    if isinstance(url, str) and url.strip():
+        return url.strip()
+    return None
+
+
+def uv_recorded_spec() -> str | None:
+    """Requirement recorded for plaibook in the uv tool environment."""
+    raw = _run_python(
+        _uv_tool_python(),
+        "import importlib.metadata as m; print(m.distribution('plaibook').read_text('direct_url.json') or '')",
+    )
+    return _spec_from_direct_url_text(raw)
+
+
+def venv_recorded_spec() -> str | None:
+    """Requirement recorded for plaibook in this virtualenv."""
+    raw = _run_python(
+        Path(sys.executable),
+        "import importlib.metadata as m; print(m.distribution('plaibook').read_text('direct_url.json') or '')",
+    )
+    return _spec_from_direct_url_text(raw)
+
+
+def venv_install_pypi(version: str) -> subprocess.CompletedProcess[str]:
+    """Reinstall that release into the virtualenv that is running this process."""
+    if not _PYPI_VERSION.fullmatch(version) or ".." in version:
+        raise UpdateError(f"Invalid PyPI version: {version}")
+    return _run_pipx([
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--force-reinstall",
+        "--no-cache-dir",
+        f"plaibook=={version}",
+    ])
+
+
+def venv_install_git_ref(ref: str) -> subprocess.CompletedProcess[str]:
+    """Install a GitHub ref into the virtualenv that is running this process."""
+    return _run_pipx([
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--force-reinstall",
+        "--no-cache-dir",
+        git_ref_spec(ref),
+    ])
+
+
+def venv_installed_version() -> str | None:
+    """Version reported by this virtualenv's pip."""
+    result = _run_pipx([
+        sys.executable,
+        "-m",
+        "pip",
+        "show",
+        "--disable-pip-version-check",
+        "plaibook",
+    ])
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        if line.startswith("Version:"):
+            return line.split(":", 1)[1].strip() or None
+    return None
 
 
 def prompt_confirm(message: str, default: bool = True) -> bool:

@@ -17,20 +17,19 @@ plai review
 plai update
 ```
 
-`plai update` installs the current PyPI release into that pipx
-environment (`pipx install --force --pip-args=--no-cache-dir
-plaibook==VERSION`). `--no-cache-dir` is there because the operator
-sandbox cannot write pip's cache. A previous `plai update --branch`
+`plai update` upgrades the install that is running. A pipx install
+uses `pipx install --force --pip-args=--no-cache-dir plaibook==VERSION`.
+A `uv tool` install uses `uv tool install --force --no-cache`. A
+virtualenv uses that interpreter's pip. An editable checkout is left
+alone. The command compares the version inside that install, not a
+different copy that happens to be on the machine. It reports the PyPI
+release as already installed only when that install's version matches
+and its recorded source is PyPI. A previous `plai update --branch`
 does not stick, including when that ref's version already matches the
-PyPI release. That check runs while the update lock is held. The command
-reports the release as already installed only when pipx recorded it. A
-missing pipx environment is installed. If pipx is not on PATH, or
-`pipx list` cannot be read, the command stops. `plai update
---check` compares the installed version to PyPI and does not install.
-`plai update --branch REF` installs that
-git ref with `pipx install --force` and the same pip argument (a
-branch, tag, or commit SHA). A non-interactive run must pass `-y` or
-`--yes`. Without a terminal, the command cancels.
+PyPI release. `--branch` checks the recorded spec after install.
+`plai update --check` compares versions and does not install. A
+non-interactive run must pass `-y` or `--yes`. Without a terminal, the
+command cancels.
 
 `plai review` is unchanged. Homebrew and Debian
 refuse `pip install` into the system Python (PEP 668); `pipx` (or
